@@ -7,6 +7,8 @@ set -euo pipefail
 
 : "${ENDPOINT_URL:?ENDPOINT_URL is required}"
 
+# bash 3.2 (macOS default) treats "${AUTH[@]}" on an empty array as unbound
+# under `set -u`. Use ${AUTH[@]+...} so an empty array expands to nothing.
 AUTH=()
 if [[ -n "${LLM_API_KEY:-}" ]]; then
   AUTH=(-H "Authorization: Bearer ${LLM_API_KEY}")
@@ -15,7 +17,7 @@ fi
 echo "probing ${ENDPOINT_URL} ..."
 
 # 1) models endpoint
-MODELS_JSON="$(curl -fsS --max-time 30 "${ENDPOINT_URL}/v1/models" "${AUTH[@]}")"
+MODELS_JSON="$(curl -fsS --max-time 30 "${ENDPOINT_URL}/v1/models" ${AUTH[@]+"${AUTH[@]}"})"
 echo "models: ${MODELS_JSON}" | head -c 500; echo
 
 MODEL="${SERVED_MODEL_NAME:-$(echo "$MODELS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"][0]["id"])')}"
@@ -23,7 +25,7 @@ MODEL="${SERVED_MODEL_NAME:-$(echo "$MODELS_JSON" | python3 -c 'import json,sys;
 # 2) tiny completion
 RESP="$(curl -fsS --max-time 120 "${ENDPOINT_URL}/v1/chat/completions" \
   -H "Content-Type: application/json" \
-  "${AUTH[@]}" \
+  ${AUTH[@]+"${AUTH[@]}"} \
   -d "{
     \"model\": \"${MODEL}\",
     \"messages\": [{\"role\": \"user\", \"content\": \"Reply with the word: ok\"}],

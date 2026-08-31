@@ -67,6 +67,7 @@ jobs:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+      TUNNEL_PUBLIC_HOSTNAME: ${{ vars.TUNNEL_PUBLIC_HOSTNAME }}
       HF_HOME: /tmp/llm-dee-hf-cache
     steps:
       - uses: actions/checkout@v4
@@ -113,7 +114,14 @@ jobs:
       - name: External probe through tunnel
         if: ${{ inputs.quick_run != true }}
         run: |
-          ENDPOINT_URL="${{ steps.tunnel.outputs.endpoint_url }}" \
+          URL="${{ steps.tunnel.outputs.endpoint_url }}"
+          # In named-tunnel service mode there is no scraped URL unless a public
+          # hostname was configured in the dashboard — skip the probe then.
+          if [[ "$URL" != http* ]]; then
+            echo "no public URL to probe (named-tunnel service mode) — skipping"
+            exit 0
+          fi
+          ENDPOINT_URL="$URL" \
           SERVED_MODEL_NAME="${{ steps.resolve.outputs.served_model_name }}" \
             bash scripts/probe.sh
 
