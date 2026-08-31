@@ -39,6 +39,15 @@ outputs:
   vllm_version:
     description: "Pinned vLLM version"
     value: ${{ steps.resolve.outputs.vllm_version }}
+  served_model_name:
+    description: "Served model name"
+    value: ${{ steps.resolve.outputs.served_model_name }}
+  resolved_quantization:
+    description: "Resolved quantization key"
+    value: ${{ steps.resolve.outputs.resolved_quantization }}
+  device:
+    description: "Target accelerator"
+    value: ${{ steps.resolve.outputs.device }}
 
 runs:
   using: composite

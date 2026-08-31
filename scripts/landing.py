@@ -28,6 +28,11 @@ HF_REPO = os.environ.get("HF_REPO", "")
 PUBLIC_URL = os.environ.get("TUNNEL_PUBLIC_HOSTNAME", "").rstrip("/")
 START = time.time()
 
+# The backend (MLX) serves the model under its HF repo id, not the catalog's
+# "served name". Use the repo id as the canonical model id for API calls, and
+# rewrite any request that uses the served-name alias so it reaches the backend.
+MODEL_ID = HF_REPO or MODEL
+
 
 def _uptime() -> str:
     s = int(time.time() - START)
@@ -45,52 +50,92 @@ def _backend_up() -> bool:
 LANDING = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>llm-dee endpoint</title>
+<title>llm-dee · LLM endpoint</title>
 <style>
- body{{font-family:ui-monospace,Menlo,Consolas,monospace;background:#0b0f14;color:#dbe2ea;margin:0;padding:2rem}}
- h1{{font-size:1.2rem;color:#7ee787;margin:0 0 .25rem}}
- .sub{{color:#8b98a5;font-size:.8rem;margin-bottom:1.5rem}}
- table{{border-collapse:collapse;width:100%;max-width:820px}}
- td,th{{border:1px solid #21262d;padding:.45rem .6rem;font-size:.82rem;text-align:left;vertical-align:top}}
- th{{background:#11161c;color:#9da7b1;width:180px}}
- code{{background:#161b22;padding:.1rem .35rem;border-radius:4px;color:#a5d6ff}}
- .ok{{color:#7ee787}} .bad{{color:#ff7b72}}
- input,button{{font:inherit;padding:.4rem .5rem;background:#0d1117;color:#dbe2ea;border:1px solid #30363d;border-radius:6px}}
- button{{cursor:pointer;background:#1f6feb;border-color:#1f6feb;color:#fff}}
- #log{{white-space:pre-wrap;background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:.8rem;max-height:280px;overflow:auto;font-size:.72rem;margin-top:1rem}}
- .row{{display:flex;gap:.5rem;margin:.4rem 0;flex-wrap:wrap}}
+ :root{{--bg:#0d1117;--panel:#161b22;--border:#262d36;--fg:#e6edf3;--mut:#8b98a5;
+       --acc:#58a6ff;--grn:#3fb950;--red:#f85149;--yel:#d29922;--pur:#bc8cff}}
+ *{{box-sizing:border-box}}
+ body{{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+      background:var(--bg);color:var(--fg);margin:0;padding:0}}
+ .wrap{{max-width:920px;margin:0 auto;padding:2rem 1.25rem 4rem}}
+ header{{display:flex;align-items:center;gap:.7rem;margin-bottom:.25rem}}
+ .dot{{width:11px;height:11px;border-radius:50%;background:var(--grn);box-shadow:0 0 10px var(--grn);animation:pulse 2s infinite}}
+ .dot.down{{background:var(--yel);box-shadow:0 0 10px var(--yel)}}
+ @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.4}}}}
+ h1{{font-size:1.25rem;margin:0;font-weight:650;letter-spacing:.2px}}
+ .sub{{color:var(--mut);font-size:.83rem;margin-bottom:1.75rem}}
+ .card{{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:1.1rem 1.25rem;margin-bottom:1.4rem}}
+ .card h2{{font-size:.78rem;text-transform:uppercase;letter-spacing:.12em;color:var(--mut);margin:0 0 .9rem;font-weight:600}}
+ table{{border-collapse:collapse;width:100%}}
+ td,th{{padding:.5rem .6rem;font-size:.85rem;text-align:left;vertical-align:top;border-bottom:1px solid var(--border)}}
+ tr:last-child td,tr:last-child th{{border-bottom:none}}
+ th{{color:var(--mut);width:170px;font-weight:500}}
+ code{{background:#0d1117;border:1px solid var(--border);padding:.12rem .4rem;border-radius:6px;color:var(--acc);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.8rem;word-break:break-all}}
+ .pill{{font-size:.72rem;padding:.15rem .55rem;border-radius:999px;font-weight:600}}
+ .pill.on{{background:rgba(63,185,80,.15);color:var(--grn)}}
+ .pill.off{{background:rgba(210,153,34,.15);color:var(--yel)}}
+ input,button{{font:inherit;padding:.55rem .7rem;background:#0d1117;color:var(--fg);border:1px solid var(--border);border-radius:8px}}
+ input:focus{{outline:none;border-color:var(--acc)}}
+ button{{cursor:pointer;background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600}}
+ button.ghost{{background:transparent;color:var(--mut)}}
+ button.ghost.on{{color:var(--grn);border-color:var(--grn)}}
+ .row{{display:flex;gap:.5rem;margin:.5rem 0;flex-wrap:wrap;align-items:center}}
+ #chat{{margin-top:.75rem;padding:.8rem;background:#0d1117;border:1px solid var(--border);border-radius:8px;min-height:3rem;font-size:.9rem;white-space:pre-wrap}}
+ /* modern log viewer */
+ .logbox{{background:#010409;border:1px solid var(--border);border-radius:10px;overflow:hidden}}
+ .logbar{{display:flex;align-items:center;gap:.5rem;padding:.5rem .8rem;background:var(--panel);border-bottom:1px solid var(--border)}}
+ .logbar .dot{{width:8px;height:8px}}
+ .logbar span{{font-size:.75rem;color:var(--mut)}}
+ #srvlog{{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.72rem;line-height:1.55;
+         padding:.8rem 1rem;height:340px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}}
+ #srvlog .ts{{color:#6e7681}}
+ #srvlog .INFO{{color:var(--acc)}} #srvlog .WARN{{color:var(--yel)}}
+ #srvlog .ERROR{{color:var(--red)}} #srvlog .GET{{color:var(--pur)}} #srvlog .POST{{color:var(--grn)}}
+ #srvlog::-webkit-scrollbar{{width:8px}} #srvlog::-webkit-scrollbar-thumb{{background:var(--border);border-radius:4px}}
 </style></head><body>
-<h1>llm-dee &mdash; LLM endpoint</h1>
-<div class="sub">OpenAI-compatible API behind a Cloudflare named tunnel</div>
+<div class="wrap">
+ <header><span class="dot" id="dot"></span><h1>llm-dee &middot; LLM endpoint</h1></header>
+ <div class="sub">OpenAI-compatible API &middot; Cloudflare named tunnel &middot; live for {uptime}</div>
 
-<table>
- <tr><th>Status</th><td>{status}</td></tr>
- <tr><th>Public base URL</th><td><code>{base}</code></td></tr>
- <tr><th>OpenAI API</th><td><code>{base}/v1</code></td></tr>
- <tr><th>Chat completions</th><td><code>POST {base}/v1/chat/completions</code></td></tr>
- <tr><th>Models list</th><td><code>GET {base}/v1/models</code></td></tr>
- <tr><th>Model</th><td><code>{model}</code></td></tr>
- <tr><th>HF repo</th><td><code>{repo}</code></td></tr>
- <tr><th>Uptime</th><td>{uptime}</td></tr>
-</table>
+ <div class="card"><h2>Connection</h2>
+ <table>
+  <tr><th>Status</th><td>{status}</td></tr>
+  <tr><th>Landing / logs</th><td><code>{base}/</code> &nbsp;&middot;&nbsp; <code>{base}/logs</code></td></tr>
+  <tr><th>OpenAI API base</th><td><code>{base}/v1</code></td></tr>
+  <tr><th>Chat completions</th><td><code>POST {base}/v1/chat/completions</code></td></tr>
+  <tr><th>Models</th><td><code>GET {base}/v1/models</code></td></tr>
+  <tr><th>Model id</th><td><code>{model}</code></td></tr>
+  <tr><th>HF repo</th><td><code>{repo}</code></td></tr>
+ </table></div>
 
-<h1 style="margin-top:1.6rem">Quick test</h1>
-<div class="row">
- <input id="msg" size="42" value="Say hello in one word">
- <button onclick="send()">Send chat</button>
+ <div class="card"><h2>Quick test</h2>
+  <div class="row">
+   <input id="msg" style="flex:1;min-width:220px" value="Say hello in one word">
+   <button onclick="send()">Send</button>
+  </div>
+  <div id="chat">response will appear here&hellip;</div>
+ </div>
+
+ <div class="card"><h2>Live server log</h2>
+  <div class="logbox">
+   <div class="logbar">
+    <span class="dot" id="logdot"></span><span id="logstat">connecting&hellip;</span>
+    <span style="flex:1"></span>
+    <button class="ghost on" id="follow" onclick="toggleFollow()">follow</button>
+    <button class="ghost" onclick="loadLog(true)">refresh</button>
+   </div>
+   <div id="srvlog"></div>
+  </div>
+ </div>
 </div>
-<div id="log">response will appear here&hellip;</div>
-
-<h1 style="margin-top:1.6rem">Server log (live tail)</h1>
-<div class="row"><button onclick="loadLog()">Refresh log</button>
-<label style="font-size:.8rem;color:#8b98a5"><input type="checkbox" id="auto" style="width:auto"> auto-refresh 5s</label></div>
-<div id="srvlog">loading&hellip;</div>
 
 <script>
 const BASE = location.origin;
+let follow = true;
+function toggleFollow(){{ follow=!follow; document.getElementById('follow').classList.toggle('on',follow); }}
 async function send(){{
-  const box = document.getElementById('log');
-  box.textContent = 'waiting...';
+  const box = document.getElementById('chat');
+  box.textContent = 'waiting…';
   try{{
     const r = await fetch(BASE + '/v1/chat/completions', {{
       method:'POST', headers:{{'Content-Type':'application/json'}},
@@ -100,12 +145,31 @@ async function send(){{
     box.textContent = j.choices ? j.choices[0].message.content : JSON.stringify(j,null,2);
   }}catch(e){{ box.textContent = 'error: ' + e; }}
 }}
-async function loadLog(){{
-  try{{ const t = await (await fetch(BASE + '/logs')).text();
-    document.getElementById('srvlog').textContent = t; }}catch(e){{}}
+function colorize(line){{
+  let esc = line.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  esc = esc.replace(/(\\d{{4}}-\\d{{2}}-\\d{{2}}[ T]\\d{{2}}:\\d{{2}}:\\d{{2}}[\\d,:-]*)/,'<span class="ts">$1</span>');
+  esc = esc.replace(/\\b(INFO)\\b/,'<span class="INFO">$1</span>')
+           .replace(/\\b(WARNING|WARN)\\b/,'<span class="WARN">$1</span>')
+           .replace(/\\b(ERROR|error|Traceback)\\b/,'<span class="ERROR">$1</span>')
+           .replace(/\\b(GET)\\b/,'<span class="GET">$1</span>')
+           .replace(/\\b(POST)\\b/,'<span class="POST">$1</span>');
+  return esc;
 }}
-loadLog();
-setInterval(()=>{{ if(document.getElementById('auto').checked) loadLog(); }}, 5000);
+async function loadLog(manual){{
+  const el = document.getElementById('srvlog');
+  try{{
+    const t = await (await fetch(BASE + '/logs')).text();
+    el.innerHTML = t.trimEnd().split('\\n').map(colorize).join('\\n');
+    document.getElementById('logstat').textContent = 'live · ' + t.split('\\n').length + ' lines';
+    document.getElementById('logdot').classList.remove('down');
+    if (follow || manual) el.scrollTop = el.scrollHeight;
+  }}catch(e){{
+    document.getElementById('logstat').textContent = 'log unavailable';
+    document.getElementById('logdot').classList.add('down');
+  }}
+}}
+loadLog(true);
+setInterval(loadLog, 4000);
 </script>
 </body></html>"""
 
@@ -125,12 +189,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path == "/" or path == "/index.html":
-            status = ('<span class="ok">● online</span>' if _backend_up()
-                      else '<span class="bad">● backend starting…</span>')
+            status = ('<span class="pill on">online</span>' if _backend_up()
+                      else '<span class="pill off">backend starting…</span>')
             body = LANDING.format(
                 status=status,
                 base=html.escape(PUBLIC_URL or f"http://localhost:{PORT}"),
-                model=html.escape(MODEL),
+                model=html.escape(MODEL_ID),
                 repo=html.escape(HF_REPO),
                 uptime=_uptime(),
             ).encode()
@@ -169,6 +233,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         url = BACKEND + self.path
         length = int(self.headers.get("Content-Length") or 0)
         data = self.rfile.read(length) if length else None
+        # Rewrite the served-name alias to the backend's real model id (HF repo),
+        # so clients can use either name and MLX won't 404 on an unknown repo.
+        if data and MODEL_ID and MODEL and MODEL_ID != MODEL:
+            try:
+                import json as _json
+                payload = _json.loads(data)
+                if isinstance(payload, dict) and payload.get("model") == MODEL:
+                    payload["model"] = MODEL_ID
+                    data = _json.dumps(payload).encode()
+            except Exception:
+                pass
         req = urllib.request.Request(url, data=data, method=self.command)
         for h in ("Content-Type", "Authorization", "Accept"):
             if self.headers.get(h):
