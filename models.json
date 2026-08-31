@@ -203,6 +203,26 @@
             "gpu_memory_utilization": 0.92,
             "min_vram_gb": 30,
             "extra_vllm_args": []
+        },
+        "qwen2.5-1.5b-mlx-4bit": {
+            "hf_repo": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+            "description": "MLX-native 4-bit Qwen2.5 1.5B — the model to use on the macos-latest (Apple Silicon/Metal) path. Fits comfortably in a hosted runner's unified memory.",
+            "runner_labels": [
+                "self-hosted",
+                "macos",
+                "metal"
+            ],
+            "quantizations": {
+                "4bit": {
+                    "repo": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+                    "dtype": "float16"
+                }
+            },
+            "default_quantization": "4bit",
+            "max_model_len": 8192,
+            "gpu_memory_utilization": 0.85,
+            "min_vram_gb": 2,
+            "extra_vllm_args": []
         }
     }
 }

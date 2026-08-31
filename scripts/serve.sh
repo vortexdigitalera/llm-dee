@@ -20,32 +20,28 @@ set -euo pipefail
 : "${DEVICE:=cuda}"
 
 # --- accelerator guard: never deploy on plain CPU ---------------------------
-# DEVICE comes from detect_accel.sh (cuda | metal). On Apple Silicon, vLLM uses
-# its CPU backend which dispatches to Accelerate/Metal — that is the supported
-# macOS path. A plain Linux box with no GPU is rejected upstream by
-# detect_accel.sh; this is a belt-and-braces check.
+# DEVICE comes from detect_accel.sh (cuda | metal).
+#   cuda  -> vLLM (OpenAI-compatible server)
+#   metal -> MLX (mlx-lm) — vLLM publishes no Apple-Silicon wheel and cannot be
+#            built on macOS, so the native Apple backend is MLX. mlx_lm.server
+#            exposes an OpenAI-compatible /v1/chat/completions endpoint.
 if [[ "$DEVICE" == "metal" ]]; then
-  echo "device: Apple Metal (macOS) — vLLM CPU/Accelerate backend"
-  # vLLM on macOS arm64 needs the CPU backend explicitly and fp16.
-  export VLLM_TARGET_DEVICE="${VLLM_TARGET_DEVICE:-cpu}"
+  echo "device: Apple Metal (macOS) — MLX backend (mlx-lm)"
 elif [[ "$DEVICE" != "cuda" ]]; then
   echo "::error::unknown DEVICE='$DEVICE' (expected cuda|metal). Refusing to deploy on plain CPU."
   exit 1
 fi
 
-echo "::group::Install vLLM ${VLLM_VERSION}"
-if [[ "$DEVICE" == "metal" ]]; then
-  # macOS system Python is externally-managed (PEP 668) — use a virtualenv.
-  echo "creating virtualenv at .venv (macOS externally-managed Python)"
-  python3 -m venv .venv
-  # shellcheck disable=SC1091
-  source .venv/bin/activate
-fi
+echo "::group::Install serving backend"
+# macOS system Python is externally-managed (PEP 668) — always use a virtualenv
+# on the Metal path. On CUDA runners a venv is harmless and keeps things uniform.
+echo "creating virtualenv at .venv"
+python3 -m venv .venv
+# shellcheck disable=SC1091
+source .venv/bin/activate
 python3 -m pip install --upgrade pip
 if [[ "$DEVICE" == "metal" ]]; then
-  # macOS: install the CPU build of vLLM (no CUDA wheels exist for macOS).
-  python3 -m pip install "vllm==${VLLM_VERSION}" "huggingface_hub[hf_transfer]" || \
-    python3 -m pip install vllm "huggingface_hub[hf_transfer]"
+  python3 -m pip install "mlx-lm" "huggingface_hub[hf_transfer]"
 else
   python3 -m pip install "vllm==${VLLM_VERSION}" "huggingface_hub[hf_transfer]"
 fi
@@ -76,19 +72,31 @@ else
   echo "::warning::LLM_API_KEY secret not set — endpoint will be UNAUTHENTICATED."
 fi
 
-echo "::group::Start vLLM server"
+echo "::group::Start server"
 echo "model:  ${HF_REPO}"
 echo "served: ${SERVED_MODEL_NAME}"
-echo "args:   ${VLLM_ARGS}"
 
-# shellcheck disable=SC2086
-nohup python3 -m vllm.entrypoints.openai.api_server \
-  --model "${HF_REPO}" \
-  ${VLLM_ARGS} \
-  "${API_KEY_ARGS[@]}" \
-  > vllm.log 2>&1 &
+if [[ "$DEVICE" == "metal" ]]; then
+  # MLX OpenAI-compatible server. It does not understand vLLM args; pass only
+  # what it supports. Default port 8000 to match the tunnel/probe.
+  echo "backend: mlx_lm.server"
+  nohup python3 -m mlx_lm.server \
+    --model "${HF_REPO}" \
+    --host 0.0.0.0 \
+    --port 8000 \
+    > vllm.log 2>&1 &
+else
+  echo "backend: vLLM"
+  echo "args:    ${VLLM_ARGS}"
+  # shellcheck disable=SC2086
+  nohup python3 -m vllm.entrypoints.openai.api_server \
+    --model "${HF_REPO}" \
+    ${VLLM_ARGS} \
+    "${API_KEY_ARGS[@]}" \
+    > vllm.log 2>&1 &
+fi
 echo $! > state/vllm.pid
-echo "vllm pid: $(cat state/vllm.pid)"
+echo "server pid: $(cat state/vllm.pid)"
 echo "::endgroup::"
 
 echo "Waiting for vLLM /health ..."

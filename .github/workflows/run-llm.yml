@@ -13,11 +13,12 @@ on:
         required: true
         type: choice
         options:
+          - qwen2.5-1.5b-mlx-4bit
           - qwen3.8-27b-uncensored
           - qwen3.8-flash-next-uncensored
           - glm-5.3-flash-uncensored
           - gemma-4-26b-a4b-it-uncensored
-        default: qwen3.8-27b-uncensored
+        default: qwen2.5-1.5b-mlx-4bit
       quantization:
         description: "Quantization (empty = catalog default for the model)"
         required: false
