@@ -58,26 +58,30 @@ Or use the helper script:
 
 ## How it routes (accelerator auto-detect, no CPU)
 
-The engine **never deploys on plain CPU**. A `detect` job probes a self-hosted
-runner and picks the best accelerator, then routes the `serve` job there:
+The workflow runs on **GitHub-hosted `macos-latest`** (Apple Silicon). It
+detects the accelerator inline and picks the serving backend:
 
-| Detected | Runner labels | vLLM path |
+| Detected | Backend | Notes |
 |---|---|---|
-| NVIDIA CUDA (≥40GB) | `self-hosted,gpu,cuda,gpu-xl` | CUDA, fp8/nvfp4/awq/gptq |
-| NVIDIA CUDA (≥20GB) | `self-hosted,gpu,cuda,gpu-large` | CUDA, awq/gptq/fp8 |
-| NVIDIA CUDA (small) | `self-hosted,gpu,cuda` | CUDA |
-| Apple Silicon (macOS arm64) | `self-hosted,macos,metal` | vLLM CPU/Accelerate backend, fp16, no CUDA quants |
+| Apple Silicon (macOS arm64) | **MLX (`mlx-lm`)** | Native Apple backend, OpenAI-compatible server on `:8000` |
+| NVIDIA CUDA | **vLLM** | CUDA quants (fp8/nvfp4/awq/gptq) |
 | **none** | — | **fails fast, no CPU deploy** |
 
 [scripts/detect_accel.sh](scripts/detect_accel.sh) does the detection;
-[scripts/resolve_model.py](scripts/resolve_model.py) adapts the flags (on Metal
-it drops `--gpu-memory-utilization` and any CUDA-only quantization, forcing
-fp16). If no probe runner answers, it falls back to the model's catalog labels.
+[scripts/serve.sh](scripts/serve.sh) branches on it (Metal → MLX, CUDA → vLLM);
+[scripts/resolve_model.py](scripts/resolve_model.py) adapts the flags.
 
-> **Apple Silicon note:** vLLM on macOS arm64 uses its CPU backend, which
-> dispatches to Accelerate/Metal. AWQ/GPTQ/FP8/NVFP4 need CUDA kernels, so on
-> Metal the engine serves unquantized fp16 weights. For best Metal-native
-> performance use an MLX/GGUF build (see the GGUF idea below).
+> **Why MLX on macOS, not vLLM:** vLLM publishes **no macOS/arm64 wheel** and
+> cannot be source-built on the `macos-26` runner (its Python is 3.14 while
+> vLLM needs `<3.14`, and the build pins a `torch` that doesn't exist for 3.14).
+> vLLM simply does not support Apple Silicon. The native Apple backend is
+> **MLX**, so on `macos-latest` the engine serves via `mlx_lm.server`, which
+> exposes the same OpenAI-compatible `/v1/chat/completions` endpoint.
+>
+> Use an **MLX-format model** on this path — the catalog ships
+> `qwen2.5-1.5b-mlx-4bit` (mlx-community) which fits a hosted runner's unified
+> memory. The big OrcaRouter CUDA models (27B–360B) will not fit and are not
+> MLX-format; they need a CUDA GPU runner.
 
 ## Repository layout
 
