@@ -34,6 +34,13 @@ elif [[ "$DEVICE" != "cuda" ]]; then
 fi
 
 echo "::group::Install vLLM ${VLLM_VERSION}"
+if [[ "$DEVICE" == "metal" ]]; then
+  # macOS system Python is externally-managed (PEP 668) — use a virtualenv.
+  echo "creating virtualenv at .venv (macOS externally-managed Python)"
+  python3 -m venv .venv
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+fi
 python3 -m pip install --upgrade pip
 if [[ "$DEVICE" == "metal" ]]; then
   # macOS: install the CPU build of vLLM (no CUDA wheels exist for macOS).
