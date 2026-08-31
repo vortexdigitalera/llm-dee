@@ -37,7 +37,23 @@ flowchart LR
 curl https://<random>.trycloudflare.com/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $LLM_API_KEY" \
-  -d '{"model": "qwen2.5-7b-instruct", "messages": [{"role":"user","content":"hi"}]}'
+  -d '{"model": "qwen3.8-27b-uncensored", "messages": [{"role":"user","content":"hi"}]}'
+```
+
+### Quick run
+
+For a fast smoke test, tick **`quick_run`** in the dispatch form — it skips the
+in-runner warmup and external probe and forces a **15-minute TTL** so you get
+an endpoint fast without burning runner time.
+
+Or use the helper script:
+
+```bash
+# Local quick run (on a GPU machine with this repo checked out)
+./scripts/quick_run.sh qwen3.8-27b-uncensored fp8
+
+# Dispatch the GitHub Actions workflow with quick_run=true
+./scripts/quick_run.sh qwen3.8-27b-uncensored fp8 --dispatch
 ```
 
 ## Repository layout

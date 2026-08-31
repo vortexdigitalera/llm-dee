@@ -48,6 +48,11 @@ on:
         required: false
         type: number
         default: 60
+      quick_run:
+        description: "Quick run — skip warmup & external probe, force 15-min TTL (fast smoke test)"
+        required: false
+        type: boolean
+        default: false
       extra_args:
         description: "Extra raw vLLM args, e.g. --enable-prefix-caching --max-num-seqs 64"
         required: false
@@ -150,6 +155,10 @@ jobs:
       - name: Start vLLM
         run: |
           mkdir -p state
+          if [[ "${{ inputs.quick_run }}" == "true" ]]; then
+            echo "quick_run: skipping in-runner warmup"
+            export SKIP_WARMUP=1
+          fi
           bash scripts/serve.sh
 
       - name: Start Cloudflare quick tunnel
@@ -157,16 +166,27 @@ jobs:
         run: bash scripts/start_tunnel.sh
 
       - name: External probe through tunnel
+        if: ${{ inputs.quick_run != true }}
         run: |
           ENDPOINT_URL="${{ steps.tunnel.outputs.endpoint_url }}" \
           SERVED_MODEL_NAME="${{ needs.resolve.outputs.served_model_name }}" \
             bash scripts/probe.sh
 
-      - name: Keep alive for ${{ inputs.ttl_minutes }} minutes
+      - name: Compute effective TTL
+        id: ttl
+        run: |
+          if [[ "${{ inputs.quick_run }}" == "true" ]]; then
+            echo "minutes=15" >> "$GITHUB_OUTPUT"
+            echo "quick_run: TTL forced to 15m"
+          else
+            echo "minutes=${{ inputs.ttl_minutes }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Keep alive for ${{ steps.ttl.outputs.minutes }} minutes
         run: |
           ENDPOINT_URL="$(cat state/endpoint_url)"
-          echo "Endpoint ${ENDPOINT_URL} alive for ${{ inputs.ttl_minutes }}m"
-          deadline=$(( $(date +%s) + ${{ inputs.ttl_minutes }} * 60 ))
+          echo "Endpoint ${ENDPOINT_URL} alive for ${{ steps.ttl.outputs.minutes }}m"
+          deadline=$(( $(date +%s) + ${{ steps.ttl.outputs.minutes }} * 60 ))
           while [[ $(date +%s) -lt $deadline ]]; do
             if ! kill -0 "$(cat state/vllm.pid)" 2>/dev/null; then
               echo "::error::vLLM died during keep-alive"; tail -n 100 vllm.log; exit 1
