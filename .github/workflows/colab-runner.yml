@@ -1,0 +1,152 @@
+name: Colab T4 runner — provision, deploy & heal
+
+# Automatically spin up a Google Colab T4 as a self-hosted runner (via colabapi),
+# deploy an LLM onto it, and keep it healthy: if the runtime or runner goes down,
+# the heal job tears it down and makes a new one.
+#
+# Prerequisites (one time, on a controller machine you control):
+#   1. pipx install colabapi   (pulls Google's official colab CLI)
+#   2. colabapi login          (browser OAuth — no password handled)
+#   3. A small always-on self-hosted "controller" runner labeled `colab-controller`
+#      (CPU is fine) that has colabapi + your Google session. This is what drives
+#      the Colab VM; the T4 does the GPU work.
+#   4. Repo secret GH_PAT with `repo` + `workflow` scope (to mint runner tokens).
+#
+# NOTE on size: a Colab T4 has 16 GB VRAM. Only T4-sized models will run.
+# The big OrcaRouter MoE models (glm-5.3, qwen3.8-flash) will NOT fit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_key:
+        description: "T4-sized model to serve"
+        required: true
+        type: choice
+        options:
+          - qwen2.5-0.5b-instruct
+          - qwen2.5-1.5b-instruct
+          - smollm2-1.7b-instruct
+        default: qwen2.5-1.5b-instruct
+      quantization:
+        description: "Quantization"
+        required: false
+        type: choice
+        options: ["", fp16, awq, gptq]
+        default: awq
+      ttl_minutes:
+        description: "Serve for this long (Colab free tier caps ~12h)"
+        required: false
+        type: number
+        default: 120
+      heal:
+        description: "Auto-heal: recreate the runner if it goes down"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    name: Provision Colab T4 runner
+    runs-on: [self-hosted, colab-controller]
+    outputs:
+      runner_ready: ${{ steps.prov.outputs.runner_ready }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bring up Colab T4 + register runner
+        id: prov
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          COLAB_RUNTIME: t4
+          COLAB_RUNNER_LABELS: self-hosted,linux,x64,gpu,t4,colab
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --upgrade colabapi 2>/dev/null || pipx install --force colabapi
+          if python3 scripts/colab_runner.py up; then
+            echo "runner_ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "runner_ready=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+  serve:
+    name: Serve ${{ inputs.model_key }} on Colab T4
+    needs: provision
+    runs-on: [self-hosted, gpu, t4, colab]
+    timeout-minutes: 720
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      HF_HOME: /content/hf-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: GPU preflight
+        run: nvidia-smi
+
+      - name: Resolve model
+        id: resolve
+        uses: ./.github/actions/resolve-model
+        with:
+          model_key: ${{ inputs.model_key }}
+          quantization: ${{ inputs.quantization }}
+
+      - name: Start vLLM
+        run: |
+          mkdir -p state
+          bash scripts/serve.sh
+
+      - name: Start Cloudflare quick tunnel
+        id: tunnel
+        run: bash scripts/start_tunnel.sh
+
+      - name: External probe
+        run: |
+          ENDPOINT_URL="${{ steps.tunnel.outputs.endpoint_url }}" \
+          SERVED_MODEL_NAME="${{ steps.resolve.outputs.served_model_name }}" \
+            bash scripts/probe.sh
+
+      - name: Keep alive for ${{ inputs.ttl_minutes }} minutes
+        run: |
+          ENDPOINT_URL="$(cat state/endpoint_url)"
+          echo "Endpoint ${ENDPOINT_URL} alive for ${{ inputs.ttl_minutes }}m"
+          deadline=$(( $(date +%s) + ${{ inputs.ttl_minutes }} * 60 ))
+          while [[ $(date +%s) -lt $deadline ]]; do
+            kill -0 "$(cat state/vllm.pid)" 2>/dev/null || { echo "::error::vLLM died"; exit 1; }
+            kill -0 "$(cat state/cloudflared.pid)" 2>/dev/null || { echo "::error::tunnel died"; exit 1; }
+            sleep 30
+          done
+
+      - name: Stop services
+        if: always()
+        run: bash scripts/stop.sh
+
+  heal:
+    name: Health-check & heal
+    needs: [provision, serve]
+    if: ${{ always() && inputs.heal && needs.serve.result != 'success' }}
+    runs-on: [self-hosted, colab-controller]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Heal Colab runner
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 scripts/colab_runner.py heal
+
+  cleanup:
+    name: Release Colab runtime
+    needs: [provision, serve]
+    if: always()
+    runs-on: [self-hosted, colab-controller]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tear down runner + stop Colab session
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/colab_runner.py down || true

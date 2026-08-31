@@ -188,6 +188,62 @@ These are next-generation multimodal architectures (`Qwen3_5`, `Qwen4Exp`,
 - **Discord/Slack webhook** step to post the fresh endpoint URL wherever your
   team hangs out.
 
+## Colab T4 auto-runner (via colabapi)
+
+Don't have a GPU server? The repo can **provision a free Google Colab T4 as a
+self-hosted runner**, deploy an LLM onto it, and **auto-heal** it — using
+[colabapi](https://github.com/vortexdigitalera/colabapi), a ban-safe CLI over
+Google's official Colab CLI (never handles your Google password).
+
+```mermaid
+flowchart LR
+    A[workflow_dispatch] --> B[provision job<br/>on colab-controller]
+    B -->|colabapi run --runtime t4| C[Colab T4 VM]
+    B -->|register ephemeral runner| C
+    C --> D[serve job<br/>vLLM + tunnel]
+    E[heal job] -->|if down: stop + recreate| B
+    F[cleanup job] -->|release runtime| C
+```
+
+**Workflow:** [.github/workflows/colab-runner.yml](.github/workflows/colab-runner.yml)
+**Engine:** [scripts/colab_runner.py](scripts/colab_runner.py)
+
+### One-time controller setup
+You need a small always-on **controller** runner (CPU is fine — a VPS, your
+laptop, a Raspberry Pi) that drives the Colab VM:
+
+```bash
+pipx install colabapi        # pulls Google's official colab CLI
+colabapi login               # browser OAuth, no password stored
+# register this machine as a runner labeled `colab-controller`
+./config.sh --url https://github.com/<you>/llm-dee --token <tok> \
+  --labels self-hosted,colab-controller --unattended
+```
+
+Set a repo secret `GH_PAT` (a PAT with `repo` + `workflow` scope) so the
+workflow can mint ephemeral runner tokens.
+
+### Run it
+Actions → **"Colab T4 runner — provision, deploy & heal"** → Run workflow:
+- `provision` brings up the T4 (`colabapi run --runtime t4`), registers it as
+  an ephemeral runner, waits for it to come online.
+- `serve` deploys the model + tunnel on the T4 and probes it.
+- `heal` (if enabled and serve failed) tears down and recreates the runner.
+- `cleanup` releases the Colab runtime when done.
+
+### Manual control
+```bash
+python3 scripts/colab_runner.py up       # ensure T4 runner is up + online
+python3 scripts/colab_runner.py status   # health: session alive? runner online?
+python3 scripts/colab_runner.py heal     # if down/expired -> recreate
+python3 scripts/colab_runner.py down     # remove runner + stop session
+```
+
+> **Size limit:** a Colab T4 has **16 GB VRAM**. Only the T4-sized models
+> (`qwen2.5-0.5b`, `qwen2.5-1.5b`, `smollm2-1.7b`) fit. The big OrcaRouter MoE
+> models (glm-5.3, qwen3.8-flash) need a real multi-GPU runner — use
+> `run-llm.yml` for those. Colab free tier also caps sessions at ~12h.
+
 ## Notes & limits
 
 - Quick-tunnel URLs are **ephemeral** — a new one every run. That's the price

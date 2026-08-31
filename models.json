@@ -11,6 +11,49 @@
     "env": {}
   },
   "models": {
+    "qwen2.5-0.5b-instruct": {
+      "hf_repo": "Qwen/Qwen2.5-0.5B-Instruct",
+      "description": "Tiny chat model — fits on a Colab T4 (16GB), ideal for smoke tests",
+      "runner_labels": ["self-hosted", "gpu", "t4"],
+      "quantizations": {
+        "fp16": { "repo": "Qwen/Qwen2.5-0.5B-Instruct", "dtype": "float16" },
+        "awq": { "repo": "Qwen/Qwen2.5-0.5B-Instruct-AWQ", "quantization": "awq" },
+        "gptq": { "repo": "Qwen/Qwen2.5-0.5B-Instruct-GPTQ-Int4", "quantization": "gptq" }
+      },
+      "default_quantization": "fp16",
+      "max_model_len": 8192,
+      "gpu_memory_utilization": 0.85,
+      "min_vram_gb": 2,
+      "extra_vllm_args": []
+    },
+    "qwen2.5-1.5b-instruct": {
+      "hf_repo": "Qwen/Qwen2.5-1.5B-Instruct",
+      "description": "Small chat model — comfortable on a Colab T4 (16GB)",
+      "runner_labels": ["self-hosted", "gpu", "t4"],
+      "quantizations": {
+        "fp16": { "repo": "Qwen/Qwen2.5-1.5B-Instruct", "dtype": "float16" },
+        "awq": { "repo": "Qwen/Qwen2.5-1.5B-Instruct-AWQ", "quantization": "awq" },
+        "gptq": { "repo": "Qwen/Qwen2.5-1.5B-Instruct-GPTQ-Int4", "quantization": "gptq" }
+      },
+      "default_quantization": "awq",
+      "max_model_len": 8192,
+      "gpu_memory_utilization": 0.85,
+      "min_vram_gb": 4,
+      "extra_vllm_args": []
+    },
+    "smollm2-1.7b-instruct": {
+      "hf_repo": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+      "description": "HF SmolLM2 — fully open, runs on a Colab T4 (16GB)",
+      "runner_labels": ["self-hosted", "gpu", "t4"],
+      "quantizations": {
+        "fp16": { "repo": "HuggingFaceTB/SmolLM2-1.7B-Instruct", "dtype": "float16" }
+      },
+      "default_quantization": "fp16",
+      "max_model_len": 8192,
+      "gpu_memory_utilization": 0.85,
+      "min_vram_gb": 4,
+      "extra_vllm_args": []
+    },
     "qwen3.8-27b-uncensored": {
       "hf_repo": "orcarouter/Qwen3.8-27B-Uncensored",
       "description": "OrcaRouter Qwen3.8 27B uncensored (multimodal, Qwen3_5ForConditionalGeneration). GATED — requires HF_TOKEN.",
