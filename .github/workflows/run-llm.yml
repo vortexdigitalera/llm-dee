@@ -1,8 +1,9 @@
 name: Run LLM (vLLM + Cloudflare quick tunnel)
 
-# Core engine workflow. Dispatch it, pick a model / runner / quantization from
-# models.json, and get a public OpenAI-compatible endpoint via a Cloudflare
-# quick tunnel (no Argo, no account, no token).
+# Core engine workflow. Runs entirely on GitHub-hosted macos-latest.
+# Detects the accelerator on the runner (Apple Silicon / Metal), deploys vLLM,
+# caches the HF weights for reuse, and exposes a public OpenAI-compatible
+# endpoint via a Cloudflare quick tunnel (no Argo, no account, no token).
 
 on:
   workflow_dispatch:
@@ -28,18 +29,8 @@ on:
           - nvfp4
           - int8
         default: ""
-      runner_label:
-        description: "Extra runner label constraint (e.g. gpu-large); empty = catalog default"
-        required: false
-        type: string
-        default: ""
       max_model_len:
         description: "Override max context length (0 = catalog default)"
-        required: false
-        type: number
-        default: 0
-      gpu_memory_utilization:
-        description: "Override GPU memory utilization 0.1-1.0 (0 = catalog default)"
         required: false
         type: number
         default: 0
@@ -60,7 +51,6 @@ on:
         default: ""
 
 concurrency:
-  # One LLM per runner at a time; cancel a stale queued run for the same model.
   group: llm-dee-${{ inputs.model_key }}
   cancel-in-progress: false
 
@@ -68,113 +58,42 @@ permissions:
   contents: read
 
 jobs:
-  detect:
-    name: Detect accelerator
-    # Probe a generic self-hosted runner to learn what accelerator is attached.
-    # Falls back to the model's catalog labels if no probe runner is available.
-    runs-on: [self-hosted]
-    continue-on-error: true
-    outputs:
-      device: ${{ steps.det.outputs.device }}
-      runner_labels: ${{ steps.det.outputs.runner_labels }}
-      accel_name: ${{ steps.det.outputs.accel_name }}
-      vram_gb: ${{ steps.det.outputs.vram_gb }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Detect accelerator
-        id: det
-        run: bash scripts/detect_accel.sh
-
-  resolve:
-    name: Resolve model config
-    runs-on: ubuntu-latest
-    needs: [detect]
-    outputs:
-      runner_labels: ${{ steps.final.outputs.runner_labels }}
-      hf_repo: ${{ steps.resolve.outputs.hf_repo }}
-      vllm_version: ${{ steps.resolve.outputs.vllm_version }}
-      served_model_name: ${{ steps.resolve.outputs.served_model_name }}
-      resolved_quantization: ${{ steps.resolve.outputs.resolved_quantization }}
-      device: ${{ steps.final.outputs.device }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Validate catalog
-        run: python3 scripts/validate_catalog.py
-
-      - name: Resolve model
-        id: resolve
-        uses: ./.github/actions/resolve-model
-        with:
-          model_key: ${{ inputs.model_key }}
-          quantization: ${{ inputs.quantization }}
-          max_model_len: ${{ inputs.max_model_len }}
-          gpu_memory_utilization: ${{ inputs.gpu_memory_utilization }}
-          extra_args: ${{ inputs.extra_args }}
-          device: ${{ needs.detect.outputs.device }}
-
-      - name: Route to detected accelerator
-        id: final
-        env:
-          DETECTED_LABELS: ${{ needs.detect.outputs.runner_labels }}
-          DETECTED_DEVICE: ${{ needs.detect.outputs.device }}
-          CATALOG_LABELS: ${{ steps.resolve.outputs.runner_labels }}
-        run: |
-          # If detection succeeded, route to the detected accelerator's labels.
-          # Otherwise fall back to the model's catalog labels.
-          if [[ -n "$DETECTED_LABELS" && "$DETECTED_LABELS" != "null" ]]; then
-            echo "routing to detected accelerator: $DETECTED_DEVICE ($DETECTED_LABELS)"
-            echo "runner_labels=${DETECTED_LABELS}" >> "$GITHUB_OUTPUT"
-            echo "device=${DETECTED_DEVICE}" >> "$GITHUB_OUTPUT"
-          else
-            echo "no probe runner detected; using catalog labels: $CATALOG_LABELS"
-            echo "runner_labels=${CATALOG_LABELS}" >> "$GITHUB_OUTPUT"
-            echo "device=cuda" >> "$GITHUB_OUTPUT"
-          fi
-
   serve:
     name: Serve ${{ inputs.model_key }}
-    needs: resolve
-    runs-on: ${{ fromJSON(needs.resolve.outputs.runner_labels) }}
+    runs-on: macos-latest
     timeout-minutes: 390
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-      HF_HOME: /opt/llm-dee/hf-cache
-      DEVICE: ${{ needs.resolve.outputs.device }}
+      HF_HOME: ${{ runner.temp }}/hf-cache
     steps:
       - uses: actions/checkout@v4
 
-      - name: Accelerator preflight
-        run: |
-          echo "device: ${{ needs.resolve.outputs.device }}"
-          if [[ "${{ needs.resolve.outputs.device }}" == "metal" ]]; then
-            sysctl -n machdep.cpu.brand_string || true
-            echo "Apple Silicon / Metal runner"
-          else
-            nvidia-smi || { echo "::error::no GPU visible on this runner"; exit 1; }
-          fi
-          python3 --version
+      - name: Detect accelerator
+        id: det
+        run: bash scripts/detect_accel.sh
 
-      - name: Restore HF cache (GitHub cache)
-        uses: actions/cache@v4
-        with:
-          path: /opt/llm-dee/hf-cache
-          key: hf-${{ needs.resolve.outputs.hf_repo }}-${{ needs.resolve.outputs.resolved_quantization }}-v1
-          restore-keys: |
-            hf-${{ needs.resolve.outputs.hf_repo }}-
-            hf-
+      - name: Validate catalog
+        run: python3 scripts/validate_catalog.py
 
-      - name: Re-resolve model config on the runner
+      - name: Resolve model config
         id: resolve
         uses: ./.github/actions/resolve-model
         with:
           model_key: ${{ inputs.model_key }}
           quantization: ${{ inputs.quantization }}
           max_model_len: ${{ inputs.max_model_len }}
-          gpu_memory_utilization: ${{ inputs.gpu_memory_utilization }}
           extra_args: ${{ inputs.extra_args }}
-          device: ${{ needs.resolve.outputs.device }}
+          device: ${{ steps.det.outputs.device }}
+
+      - name: Restore HF cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/hf-cache
+          key: hf-${{ steps.resolve.outputs.hf_repo }}-${{ steps.resolve.outputs.resolved_quantization }}-v1
+          restore-keys: |
+            hf-${{ steps.resolve.outputs.hf_repo }}-
+            hf-
 
       - name: Start vLLM
         run: |
@@ -193,7 +112,7 @@ jobs:
         if: ${{ inputs.quick_run != true }}
         run: |
           ENDPOINT_URL="${{ steps.tunnel.outputs.endpoint_url }}" \
-          SERVED_MODEL_NAME="${{ needs.resolve.outputs.served_model_name }}" \
+          SERVED_MODEL_NAME="${{ steps.resolve.outputs.served_model_name }}" \
             bash scripts/probe.sh
 
       - name: Compute effective TTL

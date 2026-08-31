@@ -103,6 +103,10 @@ def main() -> None:
             )
         quantization = None
 
+    # Download dir: honor HF_HOME (set by the workflow to the cached path) so
+    # weights land in the actions/cache directory and get reused across runs.
+    download_dir = os.environ.get("HF_HOME", "/tmp/hf-cache")
+
     # Build vLLM CLI args (consumed by scripts/serve.sh)
     args: list[str] = [
         "--host", "0.0.0.0",
@@ -110,7 +114,7 @@ def main() -> None:
         "--served-model-name", served_name,
         "--dtype", dtype,
         "--max-model-len", str(max_model_len),
-        "--download-dir", "/tmp/hf-cache",
+        "--download-dir", download_dir,
     ]
     if device != "metal":
         # GPU memory utilization is meaningless on the Metal/CPU backend.
