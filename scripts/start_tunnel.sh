@@ -13,19 +13,41 @@
 set -euo pipefail
 
 CLOUDFLARED_VERSION="${CLOUDFLARED_VERSION:-2024.12.2}"
+OS="$(uname -s)"
 ARCH="$(uname -m)"
-case "$ARCH" in
-  x86_64)  CF_ARCH="amd64" ;;
-  aarch64) CF_ARCH="arm64" ;;
-  *) echo "::error::unsupported arch: $ARCH"; exit 1 ;;
+
+# Map to cloudflared release asset names. Linux ships a bare binary; macOS
+# (Darwin) ships a .tgz containing the binary.
+case "$OS" in
+  Linux)
+    case "$ARCH" in
+      x86_64)        CF_ASSET="cloudflared-linux-amd64" ;;
+      aarch64|arm64) CF_ASSET="cloudflared-linux-arm64" ;;
+      *) echo "::error::unsupported Linux arch: $ARCH"; exit 1 ;;
+    esac
+    CF_TGZ=0
+    ;;
+  Darwin)
+    case "$ARCH" in
+      x86_64) CF_ASSET="cloudflared-darwin-amd64.tgz" ;;
+      arm64)  CF_ASSET="cloudflared-darwin-arm64.tgz" ;;
+      *) echo "::error::unsupported macOS arch: $ARCH"; exit 1 ;;
+    esac
+    CF_TGZ=1
+    ;;
+  *) echo "::error::unsupported OS: $OS"; exit 1 ;;
 esac
 
 mkdir -p state bin
 
 if [[ ! -x bin/cloudflared ]]; then
-  echo "::group::Download cloudflared ${CLOUDFLARED_VERSION} (${CF_ARCH})"
-  curl -fsSL -o bin/cloudflared \
-    "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-${CF_ARCH}"
+  echo "::group::Download cloudflared ${CLOUDFLARED_VERSION} (${OS}/${ARCH})"
+  url="https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/${CF_ASSET}"
+  if [[ "$CF_TGZ" == "1" ]]; then
+    curl -fsSL "$url" | tar -xz -C bin
+  else
+    curl -fsSL -o bin/cloudflared "$url"
+  fi
   chmod +x bin/cloudflared
   bin/cloudflared --version
   echo "::endgroup::"
