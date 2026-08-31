@@ -66,6 +66,7 @@ jobs:
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
       HF_HOME: /tmp/llm-dee-hf-cache
     steps:
       - uses: actions/checkout@v4
@@ -143,7 +144,15 @@ jobs:
             if ! kill -0 "$(cat state/vllm.pid)" 2>/dev/null; then
               echo "::error::vLLM died during keep-alive"; tail -n 100 vllm.log; exit 1
             fi
-            if ! kill -0 "$(cat state/cloudflared.pid)" 2>/dev/null; then
+            cf_pid="$(cat state/cloudflared.pid)"
+            if [[ "$cf_pid" == "service" ]]; then
+              # named-tunnel service mode: check the service is still up
+              if [[ "$(uname -s)" == "Darwin" ]]; then
+                sudo launchctl list 2>/dev/null | grep -q cloudflared || { echo "::error::cloudflared service not running"; exit 1; }
+              else
+                systemctl is-active --quiet cloudflared || { echo "::error::cloudflared service not active"; exit 1; }
+              fi
+            elif ! kill -0 "$cf_pid" 2>/dev/null; then
               echo "::error::cloudflared died during keep-alive"; tail -n 50 cloudflared.log; exit 1
             fi
             sleep 30

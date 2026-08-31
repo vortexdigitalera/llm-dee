@@ -53,6 +53,57 @@ if [[ ! -x bin/cloudflared ]]; then
   echo "::endgroup::"
 fi
 
+# --- Named tunnel (service) mode ---------------------------------------------
+# If CLOUDFLARE_TUNNEL_TOKEN is set, install cloudflared as a system service
+# using the named-tunnel token and start it. The public hostname and routing
+# are controlled from the Cloudflare Zero Trust dashboard (no trycloudflare URL
+# is scraped in this mode).
+if [[ -n "${CLOUDFLARE_TUNNEL_TOKEN:-}" ]]; then
+  echo "::group::Install & start cloudflared service (named tunnel)"
+  SUDO=""
+  if [[ "$(id -u)" -ne 0 ]]; then SUDO="sudo"; fi
+
+  # Install the service with the token, then start it.
+  $SUDO bin/cloudflared service install "${CLOUDFLARE_TUNNEL_TOKEN}"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    # launchd
+    $SUDO launchctl start com.cloudflare.cloudflared || true
+  else
+    # systemd
+    $SUDO systemctl enable cloudflared || true
+    $SUDO systemctl restart cloudflared
+  fi
+
+  # The service runs detached; record a sentinel pid for the keep-alive check.
+  # We poll the service instead of a foreground process.
+  echo "service" > state/cloudflared.pid
+  echo "named tunnel service installed and started"
+  echo "::endgroup::"
+
+  ENDPOINT_URL="${TUNNEL_PUBLIC_HOSTNAME:-see Cloudflare Zero Trust dashboard -> Networks -> Tunnels}"
+  echo "$ENDPOINT_URL" > state/endpoint_url
+  echo "Endpoint: ${ENDPOINT_URL}"
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    echo "endpoint_url=${ENDPOINT_URL}" >> "$GITHUB_OUTPUT"
+  fi
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    {
+      echo ""
+      echo "## Named tunnel (service mode)"
+      echo ""
+      echo "cloudflared installed as a system service with the named-tunnel token."
+      echo "Manage the public hostname and ingress rules in the Cloudflare Zero Trust"
+      echo "dashboard (**Networks → Tunnels**). Point your hostname at \`http://localhost:8000\`."
+      echo ""
+      if [[ -n "${TUNNEL_PUBLIC_HOSTNAME:-}" ]]; then
+        echo "| **Base URL** | \`${TUNNEL_PUBLIC_HOSTNAME}\` |"
+        echo "| **OpenAI API** | \`${TUNNEL_PUBLIC_HOSTNAME}/v1\` |"
+      fi
+    } >> "$GITHUB_STEP_SUMMARY"
+  fi
+  exit 0
+fi
+
 echo "::group::Start quick tunnel"
 nohup bin/cloudflared tunnel \
   --no-autoupdate \
