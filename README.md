@@ -56,6 +56,29 @@ Or use the helper script:
 ./scripts/quick_run.sh qwen3.8-27b-uncensored fp8 --dispatch
 ```
 
+## How it routes (accelerator auto-detect, no CPU)
+
+The engine **never deploys on plain CPU**. A `detect` job probes a self-hosted
+runner and picks the best accelerator, then routes the `serve` job there:
+
+| Detected | Runner labels | vLLM path |
+|---|---|---|
+| NVIDIA CUDA (≥40GB) | `self-hosted,gpu,cuda,gpu-xl` | CUDA, fp8/nvfp4/awq/gptq |
+| NVIDIA CUDA (≥20GB) | `self-hosted,gpu,cuda,gpu-large` | CUDA, awq/gptq/fp8 |
+| NVIDIA CUDA (small) | `self-hosted,gpu,cuda` | CUDA |
+| Apple Silicon (macOS arm64) | `self-hosted,macos,metal` | vLLM CPU/Accelerate backend, fp16, no CUDA quants |
+| **none** | — | **fails fast, no CPU deploy** |
+
+[scripts/detect_accel.sh](scripts/detect_accel.sh) does the detection;
+[scripts/resolve_model.py](scripts/resolve_model.py) adapts the flags (on Metal
+it drops `--gpu-memory-utilization` and any CUDA-only quantization, forcing
+fp16). If no probe runner answers, it falls back to the model's catalog labels.
+
+> **Apple Silicon note:** vLLM on macOS arm64 uses its CPU backend, which
+> dispatches to Accelerate/Metal. AWQ/GPTQ/FP8/NVFP4 need CUDA kernels, so on
+> Metal the engine serves unquantized fp16 weights. For best Metal-native
+> performance use an MLX/GGUF build (see the GGUF idea below).
+
 ## Repository layout
 
 | Path | Purpose |

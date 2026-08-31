@@ -17,10 +17,31 @@ set -euo pipefail
 : "${VLLM_ARGS:?VLLM_ARGS is required}"
 : "${MODEL_ENV_JSON:={}}"
 : "${SERVED_MODEL_NAME:=model}"
+: "${DEVICE:=cuda}"
+
+# --- accelerator guard: never deploy on plain CPU ---------------------------
+# DEVICE comes from detect_accel.sh (cuda | metal). On Apple Silicon, vLLM uses
+# its CPU backend which dispatches to Accelerate/Metal — that is the supported
+# macOS path. A plain Linux box with no GPU is rejected upstream by
+# detect_accel.sh; this is a belt-and-braces check.
+if [[ "$DEVICE" == "metal" ]]; then
+  echo "device: Apple Metal (macOS) — vLLM CPU/Accelerate backend"
+  # vLLM on macOS arm64 needs the CPU backend explicitly and fp16.
+  export VLLM_TARGET_DEVICE="${VLLM_TARGET_DEVICE:-cpu}"
+elif [[ "$DEVICE" != "cuda" ]]; then
+  echo "::error::unknown DEVICE='$DEVICE' (expected cuda|metal). Refusing to deploy on plain CPU."
+  exit 1
+fi
 
 echo "::group::Install vLLM ${VLLM_VERSION}"
 python3 -m pip install --upgrade pip
-python3 -m pip install "vllm==${VLLM_VERSION}" "huggingface_hub[hf_transfer]"
+if [[ "$DEVICE" == "metal" ]]; then
+  # macOS: install the CPU build of vLLM (no CUDA wheels exist for macOS).
+  python3 -m pip install "vllm==${VLLM_VERSION}" "huggingface_hub[hf_transfer]" || \
+    python3 -m pip install vllm "huggingface_hub[hf_transfer]"
+else
+  python3 -m pip install "vllm==${VLLM_VERSION}" "huggingface_hub[hf_transfer]"
+fi
 echo "::endgroup::"
 
 # Apply per-model env from the catalog (e.g. VLLM_USE_V1, trust-remote-code flags)

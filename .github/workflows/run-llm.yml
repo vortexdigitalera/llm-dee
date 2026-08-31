@@ -68,15 +68,34 @@ permissions:
   contents: read
 
 jobs:
+  detect:
+    name: Detect accelerator
+    # Probe a generic self-hosted runner to learn what accelerator is attached.
+    # Falls back to the model's catalog labels if no probe runner is available.
+    runs-on: [self-hosted]
+    continue-on-error: true
+    outputs:
+      device: ${{ steps.det.outputs.device }}
+      runner_labels: ${{ steps.det.outputs.runner_labels }}
+      accel_name: ${{ steps.det.outputs.accel_name }}
+      vram_gb: ${{ steps.det.outputs.vram_gb }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect accelerator
+        id: det
+        run: bash scripts/detect_accel.sh
+
   resolve:
     name: Resolve model config
     runs-on: ubuntu-latest
+    needs: [detect]
     outputs:
       runner_labels: ${{ steps.final.outputs.runner_labels }}
       hf_repo: ${{ steps.resolve.outputs.hf_repo }}
       vllm_version: ${{ steps.resolve.outputs.vllm_version }}
       served_model_name: ${{ steps.resolve.outputs.served_model_name }}
       resolved_quantization: ${{ steps.resolve.outputs.resolved_quantization }}
+      device: ${{ steps.final.outputs.device }}
     steps:
       - uses: actions/checkout@v4
 
@@ -92,29 +111,26 @@ jobs:
           max_model_len: ${{ inputs.max_model_len }}
           gpu_memory_utilization: ${{ inputs.gpu_memory_utilization }}
           extra_args: ${{ inputs.extra_args }}
+          device: ${{ needs.detect.outputs.device }}
 
-      - name: Apply runner label override
-        id: labels
-        if: ${{ inputs.runner_label != '' }}
-        env:
-          BASE_LABELS: ${{ steps.resolve.outputs.runner_labels }}
-          EXTRA_LABEL: ${{ inputs.runner_label }}
-        run: |
-          python3 -c '
-          import json, os
-          base = json.loads(os.environ["BASE_LABELS"])
-          extra = os.environ["EXTRA_LABEL"]
-          if extra not in base:
-              base.append(extra)
-          print("runner_labels=" + json.dumps(base))
-          ' >> "$GITHUB_OUTPUT"
-
-      - name: Final runner labels
+      - name: Route to detected accelerator
         id: final
+        env:
+          DETECTED_LABELS: ${{ needs.detect.outputs.runner_labels }}
+          DETECTED_DEVICE: ${{ needs.detect.outputs.device }}
+          CATALOG_LABELS: ${{ steps.resolve.outputs.runner_labels }}
         run: |
-          LABELS="${{ steps.labels.outputs.runner_labels }}"
-          if [[ -z "$LABELS" ]]; then LABELS='${{ steps.resolve.outputs.runner_labels }}'; fi
-          echo "runner_labels=${LABELS}" >> "$GITHUB_OUTPUT"
+          # If detection succeeded, route to the detected accelerator's labels.
+          # Otherwise fall back to the model's catalog labels.
+          if [[ -n "$DETECTED_LABELS" && "$DETECTED_LABELS" != "null" ]]; then
+            echo "routing to detected accelerator: $DETECTED_DEVICE ($DETECTED_LABELS)"
+            echo "runner_labels=${DETECTED_LABELS}" >> "$GITHUB_OUTPUT"
+            echo "device=${DETECTED_DEVICE}" >> "$GITHUB_OUTPUT"
+          else
+            echo "no probe runner detected; using catalog labels: $CATALOG_LABELS"
+            echo "runner_labels=${CATALOG_LABELS}" >> "$GITHUB_OUTPUT"
+            echo "device=cuda" >> "$GITHUB_OUTPUT"
+          fi
 
   serve:
     name: Serve ${{ inputs.model_key }}
@@ -125,12 +141,19 @@ jobs:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       HF_HOME: /opt/llm-dee/hf-cache
+      DEVICE: ${{ needs.resolve.outputs.device }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: GPU preflight
+      - name: Accelerator preflight
         run: |
-          nvidia-smi || { echo "::error::no GPU visible on this runner"; exit 1; }
+          echo "device: ${{ needs.resolve.outputs.device }}"
+          if [[ "${{ needs.resolve.outputs.device }}" == "metal" ]]; then
+            sysctl -n machdep.cpu.brand_string || true
+            echo "Apple Silicon / Metal runner"
+          else
+            nvidia-smi || { echo "::error::no GPU visible on this runner"; exit 1; }
+          fi
           python3 --version
 
       - name: Restore HF cache (GitHub cache)
@@ -151,6 +174,7 @@ jobs:
           max_model_len: ${{ inputs.max_model_len }}
           gpu_memory_utilization: ${{ inputs.gpu_memory_utilization }}
           extra_args: ${{ inputs.extra_args }}
+          device: ${{ needs.resolve.outputs.device }}
 
       - name: Start vLLM
         run: |

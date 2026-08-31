@@ -1,120 +1,208 @@
 {
-  "$schema": "./models.schema.json",
-  "version": 1,
-  "defaults": {
-    "runner_labels": ["self-hosted", "gpu"],
-    "vllm_version": "0.11.0",
-    "dtype": "auto",
-    "gpu_memory_utilization": 0.92,
-    "max_model_len": 32768,
-    "served_model_name": null,
-    "env": {}
-  },
-  "models": {
-    "qwen2.5-0.5b-instruct": {
-      "hf_repo": "Qwen/Qwen2.5-0.5B-Instruct",
-      "description": "Tiny chat model — fits on a Colab T4 (16GB), ideal for smoke tests",
-      "runner_labels": ["self-hosted", "gpu", "t4"],
-      "quantizations": {
-        "fp16": { "repo": "Qwen/Qwen2.5-0.5B-Instruct", "dtype": "float16" },
-        "awq": { "repo": "Qwen/Qwen2.5-0.5B-Instruct-AWQ", "quantization": "awq" },
-        "gptq": { "repo": "Qwen/Qwen2.5-0.5B-Instruct-GPTQ-Int4", "quantization": "gptq" }
-      },
-      "default_quantization": "fp16",
-      "max_model_len": 8192,
-      "gpu_memory_utilization": 0.85,
-      "min_vram_gb": 2,
-      "extra_vllm_args": []
+    "$schema": "./models.schema.json",
+    "version": 1,
+    "defaults": {
+        "runner_labels": [
+            "self-hosted",
+            "gpu"
+        ],
+        "vllm_version": "0.11.0",
+        "dtype": "auto",
+        "gpu_memory_utilization": 0.92,
+        "max_model_len": 32768,
+        "served_model_name": null,
+        "env": {}
     },
-    "qwen2.5-1.5b-instruct": {
-      "hf_repo": "Qwen/Qwen2.5-1.5B-Instruct",
-      "description": "Small chat model — comfortable on a Colab T4 (16GB)",
-      "runner_labels": ["self-hosted", "gpu", "t4"],
-      "quantizations": {
-        "fp16": { "repo": "Qwen/Qwen2.5-1.5B-Instruct", "dtype": "float16" },
-        "awq": { "repo": "Qwen/Qwen2.5-1.5B-Instruct-AWQ", "quantization": "awq" },
-        "gptq": { "repo": "Qwen/Qwen2.5-1.5B-Instruct-GPTQ-Int4", "quantization": "gptq" }
-      },
-      "default_quantization": "awq",
-      "max_model_len": 8192,
-      "gpu_memory_utilization": 0.85,
-      "min_vram_gb": 4,
-      "extra_vllm_args": []
-    },
-    "smollm2-1.7b-instruct": {
-      "hf_repo": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
-      "description": "HF SmolLM2 — fully open, runs on a Colab T4 (16GB)",
-      "runner_labels": ["self-hosted", "gpu", "t4"],
-      "quantizations": {
-        "fp16": { "repo": "HuggingFaceTB/SmolLM2-1.7B-Instruct", "dtype": "float16" }
-      },
-      "default_quantization": "fp16",
-      "max_model_len": 8192,
-      "gpu_memory_utilization": 0.85,
-      "min_vram_gb": 4,
-      "extra_vllm_args": []
-    },
-    "qwen3.8-27b-uncensored": {
-      "hf_repo": "orcarouter/Qwen3.8-27B-Uncensored",
-      "description": "OrcaRouter Qwen3.8 27B uncensored (multimodal, Qwen3_5ForConditionalGeneration). GATED — requires HF_TOKEN.",
-      "runner_labels": ["self-hosted", "gpu", "gpu-large"],
-      "requires_hf_token": true,
-      "quantizations": {
-        "bf16": { "repo": "orcarouter/Qwen3.8-27B-Uncensored", "dtype": "bfloat16" },
-        "fp8": { "repo": "orcarouter/Qwen3.8-27B-Uncensored-FP8", "quantization": "fp8" },
-        "nvfp4": { "repo": "orcarouter/Qwen3.8-27B-Uncensored-NVFP4", "quantization": "nvfp4" },
-        "int8": { "repo": "orcarouter/Qwen3.8-27B-Uncensored-INT8", "quantization": "compressed-tensors" }
-      },
-      "default_quantization": "fp8",
-      "max_model_len": 32768,
-      "gpu_memory_utilization": 0.92,
-      "min_vram_gb": 32,
-      "extra_vllm_args": []
-    },
-    "qwen3.8-flash-next-uncensored": {
-      "hf_repo": "orcarouter/Qwen3.8-Flash-Next-Uncensored",
-      "description": "OrcaRouter Qwen3.8-Flash-Next uncensored (~360B MoE, Qwen4ExpForConditionalGeneration). Needs multi-GPU / NVL class. GATED — requires HF_TOKEN.",
-      "runner_labels": ["self-hosted", "gpu", "gpu-xl"],
-      "requires_hf_token": true,
-      "quantizations": {
-        "bf16": { "repo": "orcarouter/Qwen3.8-Flash-Next-Uncensored", "dtype": "bfloat16" },
-        "fp8": { "repo": "orcarouter/Qwen3.8-Flash-Next-Uncensored-FP8", "quantization": "fp8" },
-        "nvfp4": { "repo": "orcarouter/Qwen3.8-Flash-Next-Uncensored-NVFP4", "quantization": "nvfp4" }
-      },
-      "default_quantization": "nvfp4",
-      "max_model_len": 32768,
-      "gpu_memory_utilization": 0.95,
-      "min_vram_gb": 190,
-      "extra_vllm_args": ["--tensor-parallel-size", "4"]
-    },
-    "glm-5.3-flash-uncensored": {
-      "hf_repo": "orcarouter/GLM-5.3-Flash-Uncensored-FP8",
-      "description": "OrcaRouter GLM-5.3-Flash uncensored (Glm5NextForConditionalGeneration). Large MoE — multi-GPU. GATED — requires HF_TOKEN.",
-      "runner_labels": ["self-hosted", "gpu", "gpu-xl"],
-      "requires_hf_token": true,
-      "quantizations": {
-        "fp8": { "repo": "orcarouter/GLM-5.3-Flash-Uncensored-FP8", "quantization": "fp8" },
-        "nvfp4": { "repo": "orcarouter/GLM-5.3-Flash-Uncensored-NVFP4", "quantization": "nvfp4" }
-      },
-      "default_quantization": "nvfp4",
-      "max_model_len": 32768,
-      "gpu_memory_utilization": 0.95,
-      "min_vram_gb": 195,
-      "extra_vllm_args": ["--tensor-parallel-size", "4"]
-    },
-    "gemma-4-26b-a4b-it-uncensored": {
-      "hf_repo": "orcarouter/Gemma-4-26B-A4B-it-Uncensored-FP8",
-      "description": "OrcaRouter Gemma-4 26B A4B instruct uncensored FP8 (Gemma4ForConditionalGeneration). GATED — requires HF_TOKEN.",
-      "runner_labels": ["self-hosted", "gpu", "gpu-large"],
-      "requires_hf_token": true,
-      "quantizations": {
-        "fp8": { "repo": "orcarouter/Gemma-4-26B-A4B-it-Uncensored-FP8", "quantization": "fp8" }
-      },
-      "default_quantization": "fp8",
-      "max_model_len": 32768,
-      "gpu_memory_utilization": 0.92,
-      "min_vram_gb": 30,
-      "extra_vllm_args": []
+    "models": {
+        "qwen2.5-0.5b-instruct": {
+            "hf_repo": "Qwen/Qwen2.5-0.5B-Instruct",
+            "description": "Tiny chat model — fits on a Colab T4 (16GB), ideal for smoke tests",
+            "runner_labels": [
+                "self-hosted",
+                "gpu",
+                "t4"
+            ],
+            "quantizations": {
+                "fp16": {
+                    "repo": "Qwen/Qwen2.5-0.5B-Instruct",
+                    "dtype": "float16"
+                },
+                "awq": {
+                    "repo": "Qwen/Qwen2.5-0.5B-Instruct-AWQ",
+                    "quantization": "awq"
+                },
+                "gptq": {
+                    "repo": "Qwen/Qwen2.5-0.5B-Instruct-GPTQ-Int4",
+                    "quantization": "gptq"
+                }
+            },
+            "default_quantization": "fp16",
+            "max_model_len": 8192,
+            "gpu_memory_utilization": 0.85,
+            "min_vram_gb": 2,
+            "extra_vllm_args": []
+        },
+        "qwen2.5-1.5b-instruct": {
+            "hf_repo": "Qwen/Qwen2.5-1.5B-Instruct",
+            "description": "Small chat model — comfortable on a Colab T4 (16GB)",
+            "runner_labels": [
+                "self-hosted",
+                "gpu",
+                "t4"
+            ],
+            "quantizations": {
+                "fp16": {
+                    "repo": "Qwen/Qwen2.5-1.5B-Instruct",
+                    "dtype": "float16"
+                },
+                "awq": {
+                    "repo": "Qwen/Qwen2.5-1.5B-Instruct-AWQ",
+                    "quantization": "awq"
+                },
+                "gptq": {
+                    "repo": "Qwen/Qwen2.5-1.5B-Instruct-GPTQ-Int4",
+                    "quantization": "gptq"
+                }
+            },
+            "default_quantization": "awq",
+            "max_model_len": 8192,
+            "gpu_memory_utilization": 0.85,
+            "min_vram_gb": 4,
+            "extra_vllm_args": []
+        },
+        "smollm2-1.7b-instruct": {
+            "hf_repo": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+            "description": "HF SmolLM2 — fully open, runs on a Colab T4 (16GB)",
+            "runner_labels": [
+                "self-hosted",
+                "gpu",
+                "t4"
+            ],
+            "quantizations": {
+                "fp16": {
+                    "repo": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+                    "dtype": "float16"
+                }
+            },
+            "default_quantization": "fp16",
+            "max_model_len": 8192,
+            "gpu_memory_utilization": 0.85,
+            "min_vram_gb": 4,
+            "extra_vllm_args": []
+        },
+        "qwen3.8-27b-uncensored": {
+            "hf_repo": "orcarouter/Qwen3.8-27B-Uncensored",
+            "description": "OrcaRouter Qwen3.8 27B uncensored (multimodal, Qwen3_5ForConditionalGeneration). GATED — requires HF_TOKEN.",
+            "runner_labels": [
+                "self-hosted",
+                "gpu",
+                "gpu-large"
+            ],
+            "requires_hf_token": true,
+            "quantizations": {
+                "bf16": {
+                    "repo": "orcarouter/Qwen3.8-27B-Uncensored",
+                    "dtype": "bfloat16"
+                },
+                "fp8": {
+                    "repo": "orcarouter/Qwen3.8-27B-Uncensored-FP8",
+                    "quantization": "fp8"
+                },
+                "nvfp4": {
+                    "repo": "orcarouter/Qwen3.8-27B-Uncensored-NVFP4",
+                    "quantization": "nvfp4"
+                },
+                "int8": {
+                    "repo": "orcarouter/Qwen3.8-27B-Uncensored-INT8",
+                    "quantization": "compressed-tensors"
+                }
+            },
+            "default_quantization": "fp8",
+            "max_model_len": 32768,
+            "gpu_memory_utilization": 0.92,
+            "min_vram_gb": 32,
+            "extra_vllm_args": []
+        },
+        "qwen3.8-flash-next-uncensored": {
+            "hf_repo": "orcarouter/Qwen3.8-Flash-Next-Uncensored",
+            "description": "OrcaRouter Qwen3.8-Flash-Next uncensored (~360B MoE, Qwen4ExpForConditionalGeneration). Needs multi-GPU / NVL class. GATED — requires HF_TOKEN.",
+            "runner_labels": [
+                "self-hosted",
+                "gpu",
+                "gpu-xl"
+            ],
+            "requires_hf_token": true,
+            "quantizations": {
+                "bf16": {
+                    "repo": "orcarouter/Qwen3.8-Flash-Next-Uncensored",
+                    "dtype": "bfloat16"
+                },
+                "fp8": {
+                    "repo": "orcarouter/Qwen3.8-Flash-Next-Uncensored-FP8",
+                    "quantization": "fp8"
+                },
+                "nvfp4": {
+                    "repo": "orcarouter/Qwen3.8-Flash-Next-Uncensored-NVFP4",
+                    "quantization": "nvfp4"
+                }
+            },
+            "default_quantization": "nvfp4",
+            "max_model_len": 32768,
+            "gpu_memory_utilization": 0.95,
+            "min_vram_gb": 190,
+            "extra_vllm_args": [
+                "--tensor-parallel-size",
+                "4"
+            ]
+        },
+        "glm-5.3-flash-uncensored": {
+            "hf_repo": "orcarouter/GLM-5.3-Flash-Uncensored-FP8",
+            "description": "OrcaRouter GLM-5.3-Flash uncensored (Glm5NextForConditionalGeneration). Large MoE — multi-GPU. GATED — requires HF_TOKEN.",
+            "runner_labels": [
+                "self-hosted",
+                "gpu",
+                "gpu-xl"
+            ],
+            "requires_hf_token": true,
+            "quantizations": {
+                "fp8": {
+                    "repo": "orcarouter/GLM-5.3-Flash-Uncensored-FP8",
+                    "quantization": "fp8"
+                },
+                "nvfp4": {
+                    "repo": "orcarouter/GLM-5.3-Flash-Uncensored-NVFP4",
+                    "quantization": "nvfp4"
+                }
+            },
+            "default_quantization": "nvfp4",
+            "max_model_len": 32768,
+            "gpu_memory_utilization": 0.95,
+            "min_vram_gb": 195,
+            "extra_vllm_args": [
+                "--tensor-parallel-size",
+                "4"
+            ]
+        },
+        "gemma-4-26b-a4b-it-uncensored": {
+            "hf_repo": "orcarouter/Gemma-4-26B-A4B-it-Uncensored-FP8",
+            "description": "OrcaRouter Gemma-4 26B A4B instruct uncensored FP8 (Gemma4ForConditionalGeneration). GATED — requires HF_TOKEN.",
+            "runner_labels": [
+                "self-hosted",
+                "gpu",
+                "gpu-large"
+            ],
+            "requires_hf_token": true,
+            "quantizations": {
+                "fp8": {
+                    "repo": "orcarouter/Gemma-4-26B-A4B-it-Uncensored-FP8",
+                    "quantization": "fp8"
+                }
+            },
+            "default_quantization": "fp8",
+            "max_model_len": 32768,
+            "gpu_memory_utilization": 0.92,
+            "min_vram_gb": 30,
+            "extra_vllm_args": []
+        }
     }
-  }
 }

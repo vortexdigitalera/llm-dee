@@ -24,6 +24,10 @@ inputs:
     description: "Extra raw vLLM CLI args appended last"
     required: false
     default: ""
+  device:
+    description: "Target accelerator (cuda|metal); empty = cuda"
+    required: false
+    default: ""
 
 outputs:
   runner_labels:
@@ -48,5 +52,6 @@ runs:
         INPUT_MAX_MODEL_LEN: ${{ inputs.max_model_len }}
         INPUT_GPU_MEM_UTIL: ${{ inputs.gpu_memory_utilization }}
         INPUT_EXTRA_ARGS: ${{ inputs.extra_args }}
+        INPUT_DEVICE: ${{ inputs.device }}
         CATALOG_PATH: ${{ github.workspace }}/models.json
       run: python3 "${{ github.workspace }}/scripts/resolve_model.py"

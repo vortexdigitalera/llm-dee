@@ -89,16 +89,32 @@ def main() -> None:
     vllm_version = model.get("vllm_version", defaults.get("vllm_version", "0.6.4.post1"))
     served_name = model.get("served_model_name") or defaults.get("served_model_name") or model_key
 
+    # Device override (cuda | metal) from detect_accel.sh. On Metal we force a
+    # CPU/Metal-friendly dtype and drop GPU-only flags; quantization that needs
+    # CUDA kernels (awq/gptq/fp8/nvfp4) is not available on Metal.
+    device = os.environ.get("INPUT_DEVICE", "").strip().lower()
+    if device == "metal":
+        dtype = "float16"
+        if quantization and quantization not in ("none", ""):
+            print(
+                f"::warning::quantization '{quantization}' needs CUDA kernels; "
+                "ignoring it on Apple Metal (using unquantized fp16 weights).",
+                file=sys.stderr,
+            )
+        quantization = None
+
     # Build vLLM CLI args (consumed by scripts/serve.sh)
     args: list[str] = [
         "--host", "0.0.0.0",
         "--port", "8000",
         "--served-model-name", served_name,
         "--dtype", dtype,
-        "--gpu-memory-utilization", str(gpu_mem_util),
         "--max-model-len", str(max_model_len),
         "--download-dir", "/tmp/hf-cache",
     ]
+    if device != "metal":
+        # GPU memory utilization is meaningless on the Metal/CPU backend.
+        args += ["--gpu-memory-utilization", str(gpu_mem_util)]
     if quantization and quantization != "none":
         args += ["--quantization", quantization]
     args += model.get("extra_vllm_args", [])
@@ -124,6 +140,7 @@ def main() -> None:
         "MODEL_ENV_JSON": json.dumps(env),
         "SERVED_MODEL_NAME": served_name,
         "RESOLVED_QUANTIZATION": quant_key,
+        "DEVICE": device or "cuda",
     }
     output_values = {
         "runner_labels": json.dumps(runner_labels),
@@ -131,6 +148,7 @@ def main() -> None:
         "vllm_version": vllm_version,
         "served_model_name": served_name,
         "resolved_quantization": quant_key,
+        "device": device or "cuda",
     }
 
     github_env = os.environ.get("GITHUB_ENV")
