@@ -36,10 +36,10 @@ on:
         type: number
         default: 0
       ttl_minutes:
-        description: "Keep the endpoint alive this long, then auto-stop (max 360)"
+        description: "Keep the endpoint alive this long, then auto-stop (GitHub caps a job at 360 = 6h)"
         required: false
         type: number
-        default: 60
+        default: 360
       quick_run:
         description: "Quick run — skip warmup & external probe, force 15-min TTL (fast smoke test)"
         required: false
@@ -123,7 +123,15 @@ jobs:
             echo "minutes=15" >> "$GITHUB_OUTPUT"
             echo "quick_run: TTL forced to 15m"
           else
-            echo "minutes=${{ inputs.ttl_minutes }}" >> "$GITHUB_OUTPUT"
+            ttl="${{ inputs.ttl_minutes }}"
+            # GitHub hard-caps a hosted job at 6h (360m). Clamp so the run
+            # shuts down cleanly and the keepalive can re-dispatch, instead of
+            # being killed abruptly by the platform.
+            if [[ "$ttl" -gt 360 ]]; then
+              echo "::warning::ttl ${ttl}m exceeds GitHub's 360m job cap — clamping to 360"
+              ttl=360
+            fi
+            echo "minutes=${ttl}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Keep alive for ${{ steps.ttl.outputs.minutes }} minutes

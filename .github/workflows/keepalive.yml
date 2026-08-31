@@ -40,10 +40,10 @@ jobs:
             echo "keepalive disabled (set LLMDEE_KEEPALIVE_ENABLED=true to enable)"; exit 0
           fi
           : "${MODEL:?set LLMDEE_KEEPALIVE_MODEL repo variable}"
-          TTL="${TTL:-350}"
+          TTL="${TTL:-360}"
 
           active=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/run-llm.yml/runs?status=in_progress&per_page=5" \
-            --jq '[.workflow_runs[] | select(.name == "Run LLM (vLLM + Cloudflare quick tunnel)")] | length')
+            --jq '.workflow_runs | length')
           queued=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/run-llm.yml/runs?status=queued&per_page=5" \
             --jq '.workflow_runs | length')
 
