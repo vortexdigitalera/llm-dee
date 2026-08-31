@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       model_key:
-        description: "Model (key from models.json)"
+        description: "Model"
         required: true
         type: choice
         options:
@@ -19,34 +19,18 @@ on:
           - glm-5.3-flash-uncensored
           - gemma-4-26b-a4b-it-uncensored
         default: qwen2.5-1.5b-mlx-4bit
-      quantization:
-        description: "Quantization (empty = catalog default for the model)"
-        required: false
-        type: choice
-        options:
-          - ""
-          - bf16
-          - fp8
-          - nvfp4
-          - int8
-        default: ""
-      max_model_len:
-        description: "Override max context length (0 = catalog default)"
-        required: false
-        type: number
-        default: 0
       ttl_minutes:
-        description: "Keep the endpoint alive this long, then auto-stop (GitHub caps a job at 360 = 6h)"
+        description: "Keep alive (min, max 360)"
         required: false
         type: number
         default: 360
       quick_run:
-        description: "Quick run — skip warmup & external probe, force 15-min TTL (fast smoke test)"
+        description: "Quick 15-min smoke test"
         required: false
         type: boolean
         default: false
-      extra_args:
-        description: "Extra raw vLLM args, e.g. --enable-prefix-caching --max-num-seqs 64"
+      advanced:
+        description: "Advanced (optional): quant=... len=... args=..."
         required: false
         type: string
         default: ""
@@ -79,14 +63,36 @@ jobs:
       - name: Validate catalog
         run: python3 scripts/validate_catalog.py
 
+      - name: Parse advanced options
+        id: adv
+        env:
+          ADVANCED: ${{ inputs.advanced }}
+        run: |
+          # Parse "quant=fp8 len=8192 args=--foo bar" from the single advanced field.
+          quant=""; len="0"; args=""
+          for tok in $ADVANCED; do
+            case "$tok" in
+              quant=*) quant="${tok#quant=}" ;;
+              len=*)   len="${tok#len=}" ;;
+              args=*)  args="${tok#args=}" ;;
+              *)       args="${args:+$args }$tok" ;;  # bare tokens -> extra args
+            esac
+          done
+          {
+            echo "quantization=$quant"
+            echo "max_model_len=${len:-0}"
+            echo "extra_args=$args"
+          } >> "$GITHUB_OUTPUT"
+          echo "parsed: quant='$quant' len='$len' args='$args'"
+
       - name: Resolve model config
         id: resolve
         uses: ./.github/actions/resolve-model
         with:
           model_key: ${{ inputs.model_key }}
-          quantization: ${{ inputs.quantization }}
-          max_model_len: ${{ inputs.max_model_len }}
-          extra_args: ${{ inputs.extra_args }}
+          quantization: ${{ steps.adv.outputs.quantization }}
+          max_model_len: ${{ steps.adv.outputs.max_model_len }}
+          extra_args: ${{ steps.adv.outputs.extra_args }}
           device: ${{ steps.det.outputs.device }}
 
       - name: Restore HF cache
@@ -143,6 +149,41 @@ jobs:
             echo "minutes=${ttl}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Connection info
+        run: |
+          URL="$(cat state/endpoint_url 2>/dev/null || echo '${{ vars.TUNNEL_PUBLIC_HOSTNAME }}')"
+          {
+            echo ""
+            echo "## ✅ Endpoint is live"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Landing / log viewer** | ${URL}/ |"
+            echo "| **Base URL** | \`${URL}\` |"
+            echo "| **OpenAI API** | \`${URL}/v1\` |"
+            echo "| **Chat** | \`POST ${URL}/v1/chat/completions\` |"
+            echo "| **Models** | \`GET ${URL}/v1/models\` |"
+            echo "| **Logs** | \`${URL}/logs\` |"
+            echo "| **Model** | \`${{ steps.resolve.outputs.served_model_name }}\` |"
+            echo "| **HF repo** | \`${{ steps.resolve.outputs.hf_repo }}\` |"
+            echo "| **Backend** | ${{ steps.det.outputs.device }} |"
+            echo "| **TTL** | ${{ steps.ttl.outputs.minutes }} min |"
+            echo ""
+            echo '```bash'
+            echo "curl ${URL}/v1/chat/completions -H 'Content-Type: application/json' \\"
+            echo "  -d '{\"model\":\"${{ steps.resolve.outputs.served_model_name }}\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}'"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Also echo a compact table into the log for quick scanning.
+          echo "::notice title=LLM endpoint::${URL}/v1  (landing: ${URL}/)"
+          echo "┌──────────────────────────────────────────────────────────"
+          echo "│ Endpoint live"
+          echo "│   landing : ${URL}/"
+          echo "│   api     : ${URL}/v1"
+          echo "│   logs    : ${URL}/logs"
+          echo "│   model   : ${{ steps.resolve.outputs.served_model_name }}"
+          echo "└──────────────────────────────────────────────────────────"
+
       - name: Keep alive for ${{ steps.ttl.outputs.minutes }} minutes
         run: |
           ENDPOINT_URL="$(cat state/endpoint_url)"
@@ -151,6 +192,9 @@ jobs:
           while [[ $(date +%s) -lt $deadline ]]; do
             if ! kill -0 "$(cat state/vllm.pid)" 2>/dev/null; then
               echo "::error::vLLM died during keep-alive"; tail -n 100 vllm.log; exit 1
+            fi
+            if ! kill -0 "$(cat state/landing.pid)" 2>/dev/null; then
+              echo "::error::landing proxy died during keep-alive"; tail -n 50 landing.log; exit 1
             fi
             cf_pid="$(cat state/cloudflared.pid)"
             if [[ "$cf_pid" == "service" ]]; then

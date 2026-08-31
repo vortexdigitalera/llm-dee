@@ -2,7 +2,7 @@
 # stop.sh — best-effort cleanup of vLLM and cloudflared processes.
 set -uo pipefail
 
-for name in vllm cloudflared; do
+for name in vllm landing cloudflared; do
   pidfile="state/${name}.pid"
   if [[ -f "$pidfile" ]]; then
     pid="$(cat "$pidfile")"
@@ -30,6 +30,7 @@ done
 # Belt-and-braces: kill anything still bound to our ports
 pkill -f 'vllm.entrypoints.openai.api_server' 2>/dev/null || true
 pkill -f 'mlx_lm.server' 2>/dev/null || true
+pkill -f 'landing.py' 2>/dev/null || true
 pkill -f 'cloudflared tunnel' 2>/dev/null || true
 
 echo "stop.sh: cleanup done"

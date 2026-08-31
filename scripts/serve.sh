@@ -76,21 +76,25 @@ echo "::group::Start server"
 echo "model:  ${HF_REPO}"
 echo "served: ${SERVED_MODEL_NAME}"
 
+# Backend serves on 8001; the landing/log-viewer proxy faces the public on 8000.
+BACKEND_PORT=8001
+
 if [[ "$DEVICE" == "metal" ]]; then
   # MLX OpenAI-compatible server. It does not understand vLLM args; pass only
-  # what it supports. Default port 8000 to match the tunnel/probe.
-  echo "backend: mlx_lm.server"
+  # what it supports.
+  echo "backend: mlx_lm.server (port ${BACKEND_PORT})"
   nohup python3 -m mlx_lm.server \
     --model "${HF_REPO}" \
-    --host 0.0.0.0 \
-    --port 8000 \
+    --host 127.0.0.1 \
+    --port "${BACKEND_PORT}" \
     > vllm.log 2>&1 &
 else
-  echo "backend: vLLM"
+  echo "backend: vLLM (port ${BACKEND_PORT})"
   echo "args:    ${VLLM_ARGS}"
   # shellcheck disable=SC2086
   nohup python3 -m vllm.entrypoints.openai.api_server \
     --model "${HF_REPO}" \
+    --port "${BACKEND_PORT}" \
     ${VLLM_ARGS} \
     "${API_KEY_ARGS[@]}" \
     > vllm.log 2>&1 &
@@ -99,10 +103,11 @@ echo $! > state/vllm.pid
 echo "server pid: $(cat state/vllm.pid)"
 echo "::endgroup::"
 
-echo "Waiting for vLLM /health ..."
+echo "Waiting for backend /health on :${BACKEND_PORT} ..."
 for i in $(seq 1 240); do
-  if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
-    echo "vLLM is healthy after ~$((i * 5))s"
+  if curl -fsS "http://127.0.0.1:${BACKEND_PORT}/health" >/dev/null 2>&1 \
+     || curl -fsS "http://127.0.0.1:${BACKEND_PORT}/v1/models" >/dev/null 2>&1; then
+    echo "backend is healthy after ~$((i * 5))s"
     break
   fi
   if ! kill -0 "$(cat state/vllm.pid)" 2>/dev/null; then
@@ -118,22 +123,50 @@ for i in $(seq 1 240); do
   sleep 5
 done
 
+# --- Landing / log-viewer proxy on the public port 8000 ----------------------
+echo "::group::Start landing proxy (:8000 -> :${BACKEND_PORT})"
+BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}" \
+LANDING_PORT=8000 \
+SERVER_LOG=vllm.log \
+SERVED_MODEL_NAME="${SERVED_MODEL_NAME}" \
+HF_REPO="${HF_REPO}" \
+  nohup python3 scripts/landing.py > landing.log 2>&1 &
+echo $! > state/landing.pid
+echo "landing pid: $(cat state/landing.pid)"
+# wait for the proxy to answer
+for i in $(seq 1 30); do
+  if curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
+    echo "landing proxy up after ~${i}s"; break
+  fi
+  sleep 1
+done
+echo "::endgroup::"
+
+# --- Prompt test after start --------------------------------------------------
 if [[ "${SKIP_WARMUP:-0}" != "1" ]]; then
-  echo "::group::Warmup request"
+  echo "::group::Prompt test (through landing proxy :8000)"
   AUTH_HEADER=()
   if [[ -n "${LLM_API_KEY:-}" ]]; then
     AUTH_HEADER=(-H "Authorization: Bearer ${LLM_API_KEY}")
   fi
-  curl -fsS http://127.0.0.1:8000/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    "${AUTH_HEADER[@]}" \
-    -d "{
-      \"model\": \"${SERVED_MODEL_NAME}\",
-      \"messages\": [{\"role\": \"user\", \"content\": \"Say 'ready' and nothing else.\"}],
-      \"max_tokens\": 8,
-      \"temperature\": 0
-    }" | python3 -m json.tool || echo "::warning::warmup request failed (server still up)"
+  for attempt in 1 2 3 4 5; do
+    if RESP="$(curl -fsS --max-time 120 http://127.0.0.1:8000/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      ${AUTH_HEADER[@]+"${AUTH_HEADER[@]}"} \
+      -d "{
+        \"model\": \"${SERVED_MODEL_NAME}\",
+        \"messages\": [{\"role\": \"user\", \"content\": \"Say 'ready' and nothing else.\"}],
+        \"max_tokens\": 8,
+        \"temperature\": 0
+      }" 2>/dev/null)"; then
+      echo "prompt test response:"
+      echo "$RESP" | python3 -m json.tool || echo "$RESP"
+      break
+    fi
+    echo "prompt test attempt ${attempt}/5 not ready — retrying in 10s"
+    sleep 10
+  done
   echo "::endgroup::"
 fi
 
-echo "serve.sh: vLLM is up and warm."
+echo "serve.sh: backend + landing proxy are up."
