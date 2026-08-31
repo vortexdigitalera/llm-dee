@@ -1,62 +1,178 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/OWNER/REPO/blob/main/models.schema.json",
-  "title": "llm-dee model catalog",
-  "type": "object",
-  "required": ["version", "defaults", "models"],
-  "properties": {
-    "$schema": { "type": "string" },
-    "version": { "type": "integer", "minimum": 1 },
-    "defaults": {
-      "type": "object",
-      "properties": {
-        "runner_labels": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-        "vllm_version": { "type": "string" },
-        "dtype": { "type": "string", "enum": ["auto", "float16", "bfloat16", "float32"] },
-        "gpu_memory_utilization": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
-        "max_model_len": { "type": "integer", "minimum": 256 },
-        "served_model_name": { "type": ["string", "null"] },
-        "env": { "type": "object", "additionalProperties": { "type": "string" } }
-      }
-    },
-    "models": {
-      "type": "object",
-      "minProperties": 1,
-      "additionalProperties": { "$ref": "#/definitions/model" }
-    }
-  },
-  "definitions": {
-    "quantVariant": {
-      "type": "object",
-      "required": ["repo"],
-      "properties": {
-        "repo": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
-        "quantization": { "type": "string", "enum": ["awq", "gptq", "fp8", "squeezellm", "marlin", "none"] },
-        "dtype": { "type": "string", "enum": ["auto", "float16", "bfloat16", "float32"] }
-      }
-    },
-    "model": {
-      "type": "object",
-      "required": ["hf_repo", "quantizations", "default_quantization"],
-      "properties": {
-        "hf_repo": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
-        "description": { "type": "string" },
-        "runner_labels": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-        "requires_hf_token": { "type": "boolean" },
-        "quantizations": {
-          "type": "object",
-          "minProperties": 1,
-          "additionalProperties": { "$ref": "#/definitions/quantVariant" }
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://github.com/OWNER/REPO/blob/main/models.schema.json",
+    "title": "llm-dee model catalog",
+    "type": "object",
+    "required": [
+        "version",
+        "defaults",
+        "models"
+    ],
+    "properties": {
+        "$schema": {
+            "type": "string"
         },
-        "default_quantization": { "type": "string" },
-        "max_model_len": { "type": "integer", "minimum": 256 },
-        "gpu_memory_utilization": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
-        "min_vram_gb": { "type": "number" },
-        "vllm_version": { "type": "string" },
-        "served_model_name": { "type": ["string", "null"] },
-        "env": { "type": "object", "additionalProperties": { "type": "string" } },
-        "extra_vllm_args": { "type": "array", "items": { "type": "string" } }
-      }
+        "version": {
+            "type": "integer",
+            "minimum": 1
+        },
+        "defaults": {
+            "type": "object",
+            "properties": {
+                "runner_labels": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "minItems": 1
+                },
+                "vllm_version": {
+                    "type": "string"
+                },
+                "dtype": {
+                    "type": "string",
+                    "enum": [
+                        "auto",
+                        "float16",
+                        "bfloat16",
+                        "float32"
+                    ]
+                },
+                "gpu_memory_utilization": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1
+                },
+                "max_model_len": {
+                    "type": "integer",
+                    "minimum": 256
+                },
+                "served_model_name": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "models": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+                "$ref": "#/definitions/model"
+            }
+        }
+    },
+    "definitions": {
+        "quantVariant": {
+            "type": "object",
+            "required": [
+                "repo"
+            ],
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+                },
+                "quantization": {
+                    "type": "string",
+                    "enum": [
+                        "awq",
+                        "gptq",
+                        "fp8",
+                        "nvfp4",
+                        "compressed-tensors",
+                        "squeezellm",
+                        "marlin",
+                        "none"
+                    ]
+                },
+                "dtype": {
+                    "type": "string",
+                    "enum": [
+                        "auto",
+                        "float16",
+                        "bfloat16",
+                        "float32"
+                    ]
+                }
+            }
+        },
+        "model": {
+            "type": "object",
+            "required": [
+                "hf_repo",
+                "quantizations",
+                "default_quantization"
+            ],
+            "properties": {
+                "hf_repo": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "runner_labels": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "minItems": 1
+                },
+                "requires_hf_token": {
+                    "type": "boolean"
+                },
+                "quantizations": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "additionalProperties": {
+                        "$ref": "#/definitions/quantVariant"
+                    }
+                },
+                "default_quantization": {
+                    "type": "string"
+                },
+                "max_model_len": {
+                    "type": "integer",
+                    "minimum": 256
+                },
+                "gpu_memory_utilization": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1
+                },
+                "min_vram_gb": {
+                    "type": "number"
+                },
+                "vllm_version": {
+                    "type": "string"
+                },
+                "served_model_name": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "extra_vllm_args": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        }
     }
-  }
 }

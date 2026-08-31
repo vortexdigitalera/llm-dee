@@ -67,22 +67,41 @@ repo, the available quantization variants (each can point at a *different* HF
 repo, e.g. `-AWQ`), runner labels, VRAM floor, and vLLM tuning:
 
 ```jsonc
-"qwen2.5-7b-instruct": {
-  "hf_repo": "Qwen/Qwen2.5-7B-Instruct",
-  "runner_labels": ["self-hosted", "gpu"],
+"qwen3.8-27b-uncensored": {
+  "hf_repo": "orcarouter/Qwen3.8-27B-Uncensored",
+  "runner_labels": ["self-hosted", "gpu", "gpu-large"],
+  "requires_hf_token": true,
   "quantizations": {
-    "bf16": { "repo": "Qwen/Qwen2.5-7B-Instruct", "dtype": "bfloat16" },
-    "awq":  { "repo": "Qwen/Qwen2.5-7B-Instruct-AWQ", "quantization": "awq" }
+    "bf16": { "repo": "orcarouter/Qwen3.8-27B-Uncensored", "dtype": "bfloat16" },
+    "fp8":  { "repo": "orcarouter/Qwen3.8-27B-Uncensored-FP8", "quantization": "fp8" },
+    "nvfp4": { "repo": "orcarouter/Qwen3.8-27B-Uncensored-NVFP4", "quantization": "nvfp4" }
   },
-  "default_quantization": "awq",
+  "default_quantization": "fp8",
   "max_model_len": 32768,
-  "min_vram_gb": 6
+  "min_vram_gb": 32
 }
 ```
 
 Add your own model by copying a block — the dispatch dropdown is the
 `options:` list in [run-llm.yml](.github/workflows/run-llm.yml), so add the key
 there too. Validate with `python3 scripts/validate_catalog.py`.
+
+### Current catalog — [OrcaRouter](https://huggingface.co/orcarouter) models
+
+The catalog currently ships **only OrcaRouter uncensored models** (all GATED —
+set the `HF_TOKEN` secret and accept the licenses on Hugging Face first):
+
+| Key | HF repo | Quants | Weights | Runner |
+|---|---|---|---|---|
+| `qwen3.8-27b-uncensored` | `orcarouter/Qwen3.8-27B-Uncensored` | bf16 / fp8 / nvfp4 / int8 | 25–56 GB | `gpu-large` |
+| `qwen3.8-flash-next-uncensored` | `orcarouter/Qwen3.8-Flash-Next-Uncensored` | bf16 / fp8 / nvfp4 | 183–360 GB | `gpu-xl` (multi-GPU) |
+| `glm-5.3-flash-uncensored` | `orcarouter/GLM-5.3-Flash-Uncensored-FP8` | fp8 / nvfp4 | 190–328 GB | `gpu-xl` (multi-GPU) |
+| `gemma-4-26b-a4b-it-uncensored` | `orcarouter/Gemma-4-26B-A4B-it-Uncensored-FP8` | fp8 | 27 GB | `gpu-large` |
+
+These are next-generation multimodal architectures (`Qwen3_5`, `Qwen4Exp`,
+`Glm5Next`, `Gemma4` ForConditionalGeneration) and need a **recent vLLM**
+(catalog pins `vllm_version: 0.11.0`). The big MoE models default to
+`--tensor-parallel-size 4` — attach a multi-GPU runner labeled `gpu-xl`.
 
 ## Robustness playbook (the "more ideas" section)
 

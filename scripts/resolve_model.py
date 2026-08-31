@@ -112,7 +112,8 @@ def main() -> None:
     if model.get("requires_hf_token") and not os.environ.get("HF_TOKEN"):
         print(
             f"::warning::model '{model_key}' is gated on Hugging Face — "
-            "set the HF_TOKEN secret or the download will fail."
+            "set the HF_TOKEN secret or the download will fail.",
+            file=sys.stderr,
         )
 
     env_values = {

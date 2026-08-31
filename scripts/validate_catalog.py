@@ -17,7 +17,7 @@ CATALOG = REPO_ROOT / "models.json"
 SCHEMA = REPO_ROOT / "models.schema.json"
 
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-KNOWN_QUANTS = {"awq", "gptq", "fp8", "squeezellm", "marlin", "none"}
+KNOWN_QUANTS = {"awq", "gptq", "fp8", "nvfp4", "compressed-tensors", "squeezellm", "marlin", "none"}
 KNOWN_DTYPES = {"auto", "float16", "bfloat16", "float32"}
 
 
