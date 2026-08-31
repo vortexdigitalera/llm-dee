@@ -1,0 +1,203 @@
+name: Run LLM (vLLM + Cloudflare quick tunnel)
+
+# Core engine workflow. Dispatch it, pick a model / runner / quantization from
+# models.json, and get a public OpenAI-compatible endpoint via a Cloudflare
+# quick tunnel (no Argo, no account, no token).
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_key:
+        description: "Model (key from models.json)"
+        required: true
+        type: choice
+        options:
+          - qwen2.5-0.5b-instruct
+          - qwen2.5-1.5b-instruct
+          - smollm2-1.7b-instruct
+          - phi-3.5-mini-instruct
+          - qwen2.5-7b-instruct
+          - qwen2.5-coder-7b-instruct
+          - llama-3.1-8b-instruct
+          - mistral-7b-instruct-v0.3
+          - gemma-2-9b-it
+          - deepseek-r1-distill-qwen-7b
+          - qwen2.5-14b-instruct
+          - qwen2.5-32b-instruct
+        default: qwen2.5-0.5b-instruct
+      quantization:
+        description: "Quantization (empty = catalog default for the model)"
+        required: false
+        type: choice
+        options:
+          - ""
+          - fp16
+          - bf16
+          - fp8
+          - awq
+          - gptq
+        default: ""
+      runner_label:
+        description: "Extra runner label constraint (e.g. gpu-large); empty = catalog default"
+        required: false
+        type: string
+        default: ""
+      max_model_len:
+        description: "Override max context length (0 = catalog default)"
+        required: false
+        type: number
+        default: 0
+      gpu_memory_utilization:
+        description: "Override GPU memory utilization 0.1-1.0 (0 = catalog default)"
+        required: false
+        type: number
+        default: 0
+      ttl_minutes:
+        description: "Keep the endpoint alive this long, then auto-stop (max 360)"
+        required: false
+        type: number
+        default: 60
+      extra_args:
+        description: "Extra raw vLLM args, e.g. --enable-prefix-caching --max-num-seqs 64"
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  # One LLM per runner at a time; cancel a stale queued run for the same model.
+  group: llm-dee-${{ inputs.model_key }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve model config
+    runs-on: ubuntu-latest
+    outputs:
+      runner_labels: ${{ steps.final.outputs.runner_labels }}
+      hf_repo: ${{ steps.resolve.outputs.hf_repo }}
+      vllm_version: ${{ steps.resolve.outputs.vllm_version }}
+      served_model_name: ${{ steps.resolve.outputs.served_model_name }}
+      resolved_quantization: ${{ steps.resolve.outputs.resolved_quantization }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate catalog
+        run: python3 scripts/validate_catalog.py
+
+      - name: Resolve model
+        id: resolve
+        uses: ./.github/actions/resolve-model
+        with:
+          model_key: ${{ inputs.model_key }}
+          quantization: ${{ inputs.quantization }}
+          max_model_len: ${{ inputs.max_model_len }}
+          gpu_memory_utilization: ${{ inputs.gpu_memory_utilization }}
+          extra_args: ${{ inputs.extra_args }}
+
+      - name: Apply runner label override
+        id: labels
+        if: ${{ inputs.runner_label != '' }}
+        env:
+          BASE_LABELS: ${{ steps.resolve.outputs.runner_labels }}
+          EXTRA_LABEL: ${{ inputs.runner_label }}
+        run: |
+          python3 -c '
+          import json, os
+          base = json.loads(os.environ["BASE_LABELS"])
+          extra = os.environ["EXTRA_LABEL"]
+          if extra not in base:
+              base.append(extra)
+          print("runner_labels=" + json.dumps(base))
+          ' >> "$GITHUB_OUTPUT"
+
+      - name: Final runner labels
+        id: final
+        run: |
+          LABELS="${{ steps.labels.outputs.runner_labels }}"
+          if [[ -z "$LABELS" ]]; then LABELS='${{ steps.resolve.outputs.runner_labels }}'; fi
+          echo "runner_labels=${LABELS}" >> "$GITHUB_OUTPUT"
+
+  serve:
+    name: Serve ${{ inputs.model_key }}
+    needs: resolve
+    runs-on: ${{ fromJSON(needs.resolve.outputs.runner_labels) }}
+    timeout-minutes: 390
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      HF_HOME: /opt/llm-dee/hf-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: GPU preflight
+        run: |
+          nvidia-smi || { echo "::error::no GPU visible on this runner"; exit 1; }
+          python3 --version
+
+      - name: Restore HF cache (GitHub cache)
+        uses: actions/cache@v4
+        with:
+          path: /opt/llm-dee/hf-cache
+          key: hf-${{ needs.resolve.outputs.hf_repo }}-${{ needs.resolve.outputs.resolved_quantization }}-v1
+          restore-keys: |
+            hf-${{ needs.resolve.outputs.hf_repo }}-
+            hf-
+
+      - name: Re-resolve model config on the runner
+        id: resolve
+        uses: ./.github/actions/resolve-model
+        with:
+          model_key: ${{ inputs.model_key }}
+          quantization: ${{ inputs.quantization }}
+          max_model_len: ${{ inputs.max_model_len }}
+          gpu_memory_utilization: ${{ inputs.gpu_memory_utilization }}
+          extra_args: ${{ inputs.extra_args }}
+
+      - name: Start vLLM
+        run: |
+          mkdir -p state
+          bash scripts/serve.sh
+
+      - name: Start Cloudflare quick tunnel
+        id: tunnel
+        run: bash scripts/start_tunnel.sh
+
+      - name: External probe through tunnel
+        run: |
+          ENDPOINT_URL="${{ steps.tunnel.outputs.endpoint_url }}" \
+          SERVED_MODEL_NAME="${{ needs.resolve.outputs.served_model_name }}" \
+            bash scripts/probe.sh
+
+      - name: Keep alive for ${{ inputs.ttl_minutes }} minutes
+        run: |
+          ENDPOINT_URL="$(cat state/endpoint_url)"
+          echo "Endpoint ${ENDPOINT_URL} alive for ${{ inputs.ttl_minutes }}m"
+          deadline=$(( $(date +%s) + ${{ inputs.ttl_minutes }} * 60 ))
+          while [[ $(date +%s) -lt $deadline ]]; do
+            if ! kill -0 "$(cat state/vllm.pid)" 2>/dev/null; then
+              echo "::error::vLLM died during keep-alive"; tail -n 100 vllm.log; exit 1
+            fi
+            if ! kill -0 "$(cat state/cloudflared.pid)" 2>/dev/null; then
+              echo "::error::cloudflared died during keep-alive"; tail -n 50 cloudflared.log; exit 1
+            fi
+            sleep 30
+          done
+          echo "TTL reached — shutting down"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ inputs.model_key }}-${{ github.run_id }}
+          path: |
+            vllm.log
+            cloudflared.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Stop services
+        if: always()
+        run: bash scripts/stop.sh

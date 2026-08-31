@@ -1,0 +1,29 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Logs & runtime state
+*.log
+state/
+cloudflared*.log
+vllm*.log
+
+# HF / model caches (never commit weights)
+hf-cache/
+models/
+*.safetensors
+*.gguf
+*.bin
+
+# Secrets
+.env
+*.pem
+*.json.secret
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

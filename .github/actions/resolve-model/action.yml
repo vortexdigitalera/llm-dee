@@ -1,0 +1,51 @@
+name: Resolve model from catalog
+
+description: >-
+  Reads models.json and exports the selected model's vLLM flags, HF repo id,
+  env vars and runner labels as step outputs / $GITHUB_ENV.
+
+inputs:
+  model_key:
+    description: "Key of the model in models.json"
+    required: true
+  quantization:
+    description: "Requested quantization (fp16|bf16|fp8|awq|gptq|gguf|none)"
+    required: false
+    default: ""
+  max_model_len:
+    description: "Override max context length (0 = use catalog default)"
+    required: false
+    default: "0"
+  gpu_memory_utilization:
+    description: "Override GPU memory utilization (0 = use catalog default)"
+    required: false
+    default: "0"
+  extra_args:
+    description: "Extra raw vLLM CLI args appended last"
+    required: false
+    default: ""
+
+outputs:
+  runner_labels:
+    description: "JSON array of runner labels for runs-on"
+    value: ${{ steps.resolve.outputs.runner_labels }}
+  hf_repo:
+    description: "Resolved Hugging Face repo id"
+    value: ${{ steps.resolve.outputs.hf_repo }}
+  vllm_version:
+    description: "Pinned vLLM version"
+    value: ${{ steps.resolve.outputs.vllm_version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve model configuration
+      id: resolve
+      shell: bash
+      env:
+        INPUT_MODEL_KEY: ${{ inputs.model_key }}
+        INPUT_QUANTIZATION: ${{ inputs.quantization }}
+        INPUT_MAX_MODEL_LEN: ${{ inputs.max_model_len }}
+        INPUT_GPU_MEM_UTIL: ${{ inputs.gpu_memory_utilization }}
+        INPUT_EXTRA_ARGS: ${{ inputs.extra_args }}
+      run: python3 "$GITHUB_ACTION_PATH/../../scripts/resolve_model.py"

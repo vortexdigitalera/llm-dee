@@ -1,0 +1,64 @@
+name: Keepalive — restart endpoint if it died
+
+# GitHub-hosted jobs are capped at 6h and self-hosted jobs at ~5 days, so a
+# "forever" endpoint is really a chain of runs. This scheduled workflow checks
+# whether the last dispatched run for the pinned model is still active; if it
+# ended (TTL, crash, runner reboot) it re-dispatches run-llm.yml automatically.
+#
+# Enable by setting the repo variables:
+#   LLMDEE_KEEPALIVE_ENABLED = "true"
+#   LLMDEE_KEEPALIVE_MODEL   = e.g. "qwen2.5-7b-instruct"
+#   LLMDEE_KEEPALIVE_QUANT   = e.g. "awq" (optional)
+#   LLMDEE_KEEPALIVE_TTL     = minutes per run, e.g. "350" (optional)
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  check:
+    name: Check & maybe re-dispatch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Keepalive check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ENABLED: ${{ vars.LLMDEE_KEEPALIVE_ENABLED }}
+          MODEL: ${{ vars.LLMDEE_KEEPALIVE_MODEL }}
+          QUANT: ${{ vars.LLMDEE_KEEPALIVE_QUANT }}
+          TTL: ${{ vars.LLMDEE_KEEPALIVE_TTL }}
+        run: |
+          set -euo pipefail
+          if [[ "${ENABLED:-false}" != "true" ]]; then
+            echo "keepalive disabled (set LLMDEE_KEEPALIVE_ENABLED=true to enable)"; exit 0
+          fi
+          : "${MODEL:?set LLMDEE_KEEPALIVE_MODEL repo variable}"
+          TTL="${TTL:-350}"
+
+          active=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/run-llm.yml/runs?status=in_progress&per_page=5" \
+            --jq '[.workflow_runs[] | select(.name == "Run LLM (vLLM + Cloudflare quick tunnel)")] | length')
+          queued=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/run-llm.yml/runs?status=queued&per_page=5" \
+            --jq '.workflow_runs | length')
+
+          if [[ "$active" -gt 0 || "$queued" -gt 0 ]]; then
+            echo "endpoint run already active/queued — nothing to do"; exit 0
+          fi
+
+          echo "no active run — re-dispatching ${MODEL} (quant=${QUANT:-default}, ttl=${TTL}m)"
+          python3 -c '
+          import json, os
+          inputs = {"model_key": os.environ["MODEL"], "ttl_minutes": int(os.environ.get("TTL", "350"))}
+          if os.environ.get("QUANT"):
+              inputs["quantization"] = os.environ["QUANT"]
+          print(json.dumps({"ref": "main", "inputs": inputs}))
+          ' > /tmp/dispatch.json
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/workflows/run-llm.yml/dispatches" \
+            --input /tmp/dispatch.json
+          echo "re-dispatched."

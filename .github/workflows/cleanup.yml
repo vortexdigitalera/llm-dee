@@ -1,0 +1,38 @@
+name: Cleanup — stop orphaned runs & prune caches
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel stale queued runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ids=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=queued&per_page=50" \
+            --jq '.workflow_runs[] | select(.created_at < (now - 3600 | strftime("%Y-%m-%dT%H:%M:%SZ"))) | .id')
+          for id in $ids; do
+            echo "force-cancelling stale queued run $id"
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/$id/force-cancel" || true
+          done
+
+      - name: Prune GitHub caches older than 7 days
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/caches?per_page=100" \
+            --jq '.actions_caches[] | select(.last_accessed_at < (now - 7*24*3600 | strftime("%Y-%m-%dT%H:%M:%SZ"))) | .id' \
+          | while read -r id; do
+              echo "deleting cache $id"
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/caches/$id" || true
+            done

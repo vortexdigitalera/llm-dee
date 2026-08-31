@@ -1,0 +1,25 @@
+# Cloudflared quick-tunnel configuration (no Argo / no named tunnel / no account).
+#
+# The tunnel is started by scripts/start_tunnel.sh with:
+#
+#   cloudflared tunnel --no-autoupdate --config cloudflared/config.yml --url http://localhost:8000
+#
+# A quick tunnel prints a random https://<random>.trycloudflare.com URL on
+# stderr. It needs NO Cloudflare login, NO token and NO DNS setup. The URL
+# changes on every start — that is expected; the workflow extracts it and
+# publishes it in the job summary and as the `endpoint_url` output.
+
+no-autoupdate: true
+
+# Log level for the tunnel daemon (debug|info|warn|error|fatal)
+loglevel: info
+
+# Metrics endpoint for health checks / debugging inside the runner
+metrics: 127.0.0.1:20000
+
+# Notes for production hardening (optional, NOT required):
+# - For a stable hostname, create a *named* tunnel (cloudflared tunnel create)
+#   and switch to `tunnel: <uuid>` + `credentials-file`, storing the JSON in
+#   GitHub Secrets. Quick tunnels are intentionally ephemeral.
+# - Put Cloudflare Access in front of the hostname for auth, or use the
+#   built-in API-key auth of the vLLM server (LLM_API_KEY secret).

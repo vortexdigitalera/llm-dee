@@ -1,0 +1,194 @@
+{
+  "$schema": "./models.schema.json",
+  "version": 1,
+  "defaults": {
+    "runner_labels": ["self-hosted", "gpu"],
+    "vllm_version": "0.6.4.post1",
+    "dtype": "auto",
+    "gpu_memory_utilization": 0.90,
+    "max_model_len": 8192,
+    "served_model_name": null,
+    "env": {}
+  },
+  "models": {
+    "qwen2.5-0.5b-instruct": {
+      "hf_repo": "Qwen/Qwen2.5-0.5B-Instruct",
+      "description": "Tiny chat model — fits anywhere, great for CI smoke tests",
+      "runner_labels": ["self-hosted", "gpu"],
+      "quantizations": {
+        "fp16": { "repo": "Qwen/Qwen2.5-0.5B-Instruct", "dtype": "float16" },
+        "awq":  { "repo": "Qwen/Qwen2.5-0.5B-Instruct-AWQ", "quantization": "awq" },
+        "gptq": { "repo": "Qwen/Qwen2.5-0.5B-Instruct-GPTQ-Int4", "quantization": "gptq" }
+      },
+      "default_quantization": "fp16",
+      "max_model_len": 32768,
+      "gpu_memory_utilization": 0.85,
+      "min_vram_gb": 2,
+      "extra_vllm_args": []
+    },
+    "qwen2.5-1.5b-instruct": {
+      "hf_repo": "Qwen/Qwen2.5-1.5B-Instruct",
+      "description": "Small chat model, fast on a single consumer GPU",
+      "runner_labels": ["self-hosted", "gpu"],
+      "quantizations": {
+        "fp16": { "repo": "Qwen/Qwen2.5-1.5B-Instruct", "dtype": "float16" },
+        "awq":  { "repo": "Qwen/Qwen2.5-1.5B-Instruct-AWQ", "quantization": "awq" },
+        "gptq": { "repo": "Qwen/Qwen2.5-1.5B-Instruct-GPTQ-Int4", "quantization": "gptq" }
+      },
+      "default_quantization": "fp16",
+      "max_model_len": 32768,
+      "gpu_memory_utilization": 0.85,
+      "min_vram_gb": 4,
+      "extra_vllm_args": []
+    },
+    "qwen2.5-7b-instruct": {
+      "hf_repo": "Qwen/Qwen2.5-7B-Instruct",
+      "description": "Solid general-purpose 7B chat model",
+      "runner_labels": ["self-hosted", "gpu"],
+      "quantizations": {
+        "bf16": { "repo": "Qwen/Qwen2.5-7B-Instruct", "dtype": "bfloat16" },
+        "awq":  { "repo": "Qwen/Qwen2.5-7B-Instruct-AWQ", "quantization": "awq" },
+        "gptq": { "repo": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4", "quantization": "gptq" },
+        "fp8":  { "repo": "Qwen/Qwen2.5-7B-Instruct-FP8", "quantization": "fp8" }
+      },
+      "default_quantization": "awq",
+      "max_model_len": 32768,
+      "gpu_memory_utilization": 0.90,
+      "min_vram_gb": 6,
+      "extra_vllm_args": []
+    },
+    "llama-3.1-8b-instruct": {
+      "hf_repo": "meta-llama/Llama-3.1-8B-Instruct",
+      "description": "Meta Llama 3.1 8B — GATED repo, requires HF_TOKEN secret",
+      "runner_labels": ["self-hosted", "gpu"],
+      "requires_hf_token": true,
+      "quantizations": {
+        "bf16": { "repo": "meta-llama/Llama-3.1-8B-Instruct", "dtype": "bfloat16" },
+        "awq":  { "repo": "hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4", "quantization": "awq" },
+        "fp8":  { "repo": "meta-llama/Llama-3.1-8B-Instruct-FP8", "quantization": "fp8" }
+      },
+      "default_quantization": "awq",
+      "max_model_len": 16384,
+      "gpu_memory_utilization": 0.90,
+      "min_vram_gb": 8,
+      "extra_vllm_args": []
+    },
+    "mistral-7b-instruct-v0.3": {
+      "hf_repo": "mistralai/Mistral-7B-Instruct-v0.3",
+      "description": "Mistral 7B Instruct v0.3",
+      "runner_labels": ["self-hosted", "gpu"],
+      "quantizations": {
+        "bf16": { "repo": "mistralai/Mistral-7B-Instruct-v0.3", "dtype": "bfloat16" },
+        "awq":  { "repo": "solidrust/Mistral-7B-Instruct-v0.3-AWQ", "quantization": "awq" },
+        "fp8":  { "repo": "mistralai/Mistral-7B-Instruct-v0.3", "quantization": "fp8", "dtype": "auto" }
+      },
+      "default_quantization": "awq",
+      "max_model_len": 32768,
+      "gpu_memory_utilization": 0.90,
+      "min_vram_gb": 8,
+      "extra_vllm_args": []
+    },
+    "phi-3.5-mini-instruct": {
+      "hf_repo": "microsoft/Phi-3.5-mini-instruct",
+      "description": "Microsoft Phi-3.5 mini — strong quality per GB",
+      "runner_labels": ["self-hosted", "gpu"],
+      "quantizations": {
+        "fp16": { "repo": "microsoft/Phi-3.5-mini-instruct", "dtype": "float16" },
+        "awq":  { "repo": "solidrust/Phi-3.5-mini-instruct-AWQ", "quantization": "awq" }
+      },
+      "default_quantization": "fp16",
+      "max_model_len": 16384,
+      "gpu_memory_utilization": 0.90,
+      "min_vram_gb": 6,
+      "extra_vllm_args": []
+    },
+    "gemma-2-9b-it": {
+      "hf_repo": "google/gemma-2-9b-it",
+      "description": "Google Gemma 2 9B — GATED repo, requires HF_TOKEN secret",
+      "runner_labels": ["self-hosted", "gpu"],
+      "requires_hf_token": true,
+      "quantizations": {
+        "bf16": { "repo": "google/gemma-2-9b-it", "dtype": "bfloat16" },
+        "awq":  { "repo": "solidrust/gemma-2-9b-it-AWQ", "quantization": "awq" }
+      },
+      "default_quantization": "awq",
+      "max_model_len": 8192,
+      "gpu_memory_utilization": 0.92,
+      "min_vram_gb": 10,
+      "extra_vllm_args": []
+    },
+    "qwen2.5-14b-instruct": {
+      "hf_repo": "Qwen/Qwen2.5-14B-Instruct",
+      "description": "14B class — needs >=16GB VRAM (AWQ) or >=28GB (bf16)",
+      "runner_labels": ["self-hosted", "gpu", "gpu-large"],
+      "quantizations": {
+        "bf16": { "repo": "Qwen/Qwen2.5-14B-Instruct", "dtype": "bfloat16" },
+        "awq":  { "repo": "Qwen/Qwen2.5-14B-Instruct-AWQ", "quantization": "awq" },
+        "gptq": { "repo": "Qwen/Qwen2.5-14B-Instruct-GPTQ-Int4", "quantization": "gptq" }
+      },
+      "default_quantization": "awq",
+      "max_model_len": 16384,
+      "gpu_memory_utilization": 0.92,
+      "min_vram_gb": 12,
+      "extra_vllm_args": []
+    },
+    "qwen2.5-32b-instruct": {
+      "hf_repo": "Qwen/Qwen2.5-32B-Instruct",
+      "description": "32B class — AWQ fits ~20GB, bf16 needs A100/H100 class",
+      "runner_labels": ["self-hosted", "gpu", "gpu-large"],
+      "quantizations": {
+        "bf16": { "repo": "Qwen/Qwen2.5-32B-Instruct", "dtype": "bfloat16" },
+        "awq":  { "repo": "Qwen/Qwen2.5-32B-Instruct-AWQ", "quantization": "awq" },
+        "gptq": { "repo": "Qwen/Qwen2.5-32B-Instruct-GPTQ-Int4", "quantization": "gptq" }
+      },
+      "default_quantization": "awq",
+      "max_model_len": 16384,
+      "gpu_memory_utilization": 0.94,
+      "min_vram_gb": 20,
+      "extra_vllm_args": []
+    },
+    "qwen2.5-coder-7b-instruct": {
+      "hf_repo": "Qwen/Qwen2.5-Coder-7B-Instruct",
+      "description": "Code-specialized 7B",
+      "runner_labels": ["self-hosted", "gpu"],
+      "quantizations": {
+        "bf16": { "repo": "Qwen/Qwen2.5-Coder-7B-Instruct", "dtype": "bfloat16" },
+        "awq":  { "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-AWQ", "quantization": "awq" },
+        "gptq": { "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GPTQ-Int4", "quantization": "gptq" }
+      },
+      "default_quantization": "awq",
+      "max_model_len": 32768,
+      "gpu_memory_utilization": 0.90,
+      "min_vram_gb": 6,
+      "extra_vllm_args": []
+    },
+    "deepseek-r1-distill-qwen-7b": {
+      "hf_repo": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+      "description": "Reasoning distill of R1 onto Qwen 7B",
+      "runner_labels": ["self-hosted", "gpu"],
+      "quantizations": {
+        "bf16": { "repo": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "dtype": "bfloat16" },
+        "awq":  { "repo": "solidrust/DeepSeek-R1-Distill-Qwen-7B-AWQ", "quantization": "awq" }
+      },
+      "default_quantization": "awq",
+      "max_model_len": 16384,
+      "gpu_memory_utilization": 0.90,
+      "min_vram_gb": 8,
+      "extra_vllm_args": []
+    },
+    "smollm2-1.7b-instruct": {
+      "hf_repo": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+      "description": "HF SmolLM2 — tiny, fully open, ideal for free runners / demos",
+      "runner_labels": ["self-hosted", "gpu"],
+      "quantizations": {
+        "fp16": { "repo": "HuggingFaceTB/SmolLM2-1.7B-Instruct", "dtype": "float16" },
+        "awq":  { "repo": "solidrust/SmolLM2-1.7B-Instruct-AWQ", "quantization": "awq" }
+      },
+      "default_quantization": "fp16",
+      "max_model_len": 8192,
+      "gpu_memory_utilization": 0.85,
+      "min_vram_gb": 4,
+      "extra_vllm_args": []
+    }
+  }
+}
