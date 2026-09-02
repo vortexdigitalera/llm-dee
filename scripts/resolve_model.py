@@ -92,16 +92,16 @@ def main() -> None:
     if not engine:
         engine = "mlx" if device == "metal" else "vllm"
 
-    # Device override (cuda | metal) from detect_accel.sh. On Metal we force a
-    # CPU/Metal-friendly dtype and drop GPU-only flags; quantization that needs
-    # CUDA kernels (awq/gptq/fp8/nvfp4) is not available on Metal.
+    # Device override (cuda | metal | cpu) from detect_accel.sh. On Metal/CPU we
+    # force a CPU-friendly dtype and drop GPU-only flags; quantization that needs
+    # CUDA kernels (awq/gptq/fp8/nvfp4) is not available there.
     device = os.environ.get("INPUT_DEVICE", "").strip().lower()
-    if device == "metal":
+    if device in ("metal", "cpu"):
         dtype = "float16"
         if engine != "ollama" and quantization and quantization not in ("none", ""):
             print(
                 f"::warning::quantization '{quantization}' needs CUDA kernels; "
-                "ignoring it on Apple Metal (using unquantized fp16 weights).",
+                "ignoring it on CPU/Metal (using unquantized fp16 weights).",
                 file=sys.stderr,
             )
             quantization = None
@@ -119,7 +119,7 @@ def main() -> None:
         "--max-model-len", str(max_model_len),
         "--download-dir", download_dir,
     ]
-    if device != "metal" and engine != "ollama":
+    if device not in ("metal", "cpu") and engine != "ollama":
         # GPU memory utilization is meaningless on the Metal/CPU backend and
         # ignored by the Ollama engine.
         args += ["--gpu-memory-utilization", str(gpu_mem_util)]

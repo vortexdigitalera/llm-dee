@@ -47,7 +47,7 @@ permissions:
 jobs:
   serve:
     name: Serve ${{ inputs.model_key }}
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 390
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}

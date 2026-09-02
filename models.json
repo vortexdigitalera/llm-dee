@@ -228,11 +228,9 @@
         },
         "qwen3.8-27b-uncensored-gguf-ollama": {
             "hf_repo": "orcarouter/Qwen3.8-27B-Uncensored-GGUF",
-            "description": "OrcaRouter Qwen3.8 27B uncensored GGUF served via Ollama. Defaults to IQ2_XXS (~8.3 GB) for the tightest fit on Apple Silicon unified memory. Use a self-hosted macOS runner with ≥12 GB RAM; GitHub-hosted macos-latest (7 GB) may still OOM during load.",
+            "description": "OrcaRouter Qwen3.8 27B uncensored GGUF served via Ollama. Defaults to IQ2_XXS (~8.3 GB). Runs on GitHub-hosted ubuntu-latest via CPU; a CUDA or Apple-Silicon self-hosted runner is much faster.",
             "runner_labels": [
-                "self-hosted",
-                "macos",
-                "metal"
+                "ubuntu-latest"
             ],
             "requires_hf_token": true,
             "quantizations": {
@@ -256,7 +254,7 @@
             "default_quantization": "iq2_xxs",
             "max_model_len": 8192,
             "gpu_memory_utilization": 0.85,
-            "min_vram_gb": 10,
+            "min_vram_gb": 0,
             "engine": "ollama",
             "extra_vllm_args": []
         },

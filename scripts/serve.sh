@@ -34,13 +34,21 @@ if [[ -z "$ENGINE" ]]; then
 fi
 
 # --- accelerator guard: never deploy on plain CPU ---------------------------
-# DEVICE comes from detect_accel.sh (cuda | metal).
+# DEVICE comes from detect_accel.sh (cuda | metal | cpu).
 #   cuda  -> vLLM (OpenAI-compatible server)
 #   metal -> MLX (mlx-lm) or Ollama — vLLM publishes no Apple-Silicon wheel.
+#   cpu   -> allowed only for Ollama GGUF.
 if [[ "$DEVICE" == "metal" ]]; then
   echo "device: Apple Metal (macOS) — engine: ${ENGINE}"
+elif [[ "$DEVICE" == "cpu" ]]; then
+  if [[ "$ENGINE" == "ollama" ]]; then
+    echo "device: CPU — engine: ollama (GGUF)"
+  else
+    echo "::error::CPU deployment is only supported with ENGINE=ollama."
+    exit 1
+  fi
 elif [[ "$DEVICE" != "cuda" ]]; then
-  echo "::error::unknown DEVICE='$DEVICE' (expected cuda|metal). Refusing to deploy on plain CPU."
+  echo "::error::unknown DEVICE='$DEVICE' (expected cuda|metal|cpu)."
   exit 1
 fi
 
@@ -60,11 +68,7 @@ if [[ "$ENGINE" == "ollama" ]]; then
   # Ollama is installed as a system service; ensure the CLI is available.
   if ! command -v ollama >/dev/null 2>&1; then
     echo "::group::Install Ollama"
-    if [[ "$DEVICE" == "metal" ]]; then
-      curl -fsSL https://ollama.com/install.sh | sh
-    else
-      curl -fsSL https://ollama.com/install.sh | sh
-    fi
+    curl -fsSL https://ollama.com/install.sh | sh
     echo "::endgroup::"
   fi
 elif [[ "$DEVICE" == "metal" ]]; then
