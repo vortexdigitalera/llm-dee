@@ -56,21 +56,15 @@ elif [[ "$(uname -s)" == "Darwin" ]]; then
   fi
 fi
 
-# --- 3. allow CPU when Ollama is the engine ---------------------------------
-# Ollama can run GGUF models on CPU in CI; other engines still require an accelerator.
+# --- 3. allow CPU fallback --------------------------------------------------
+# Ollama can run GGUF models on CPU in CI; other engines will fail fast in serve.sh.
 if [[ -z "$device" ]]; then
-  if [[ "${ENGINE:-}" == "ollama" ]]; then
-    device="cpu"
-    accel_name="CPU (Ollama GGUF)"
-    vram_gb=0
-    dtype="float16"
-    runner_labels='["self-hosted","cpu","ollama"]'
-    extra_args=""
-  else
-    echo "::error::No GPU/Metal accelerator detected. This engine does not deploy on plain CPU." >&2
-    echo "::error::Attach a CUDA GPU runner or an Apple Silicon (macOS arm64) runner." >&2
-    exit 1
-  fi
+  device="cpu"
+  accel_name="CPU"
+  vram_gb=0
+  dtype="float16"
+  runner_labels='["self-hosted","cpu"]'
+  extra_args=""
 fi
 
 echo "detected: device=$device accel='$accel_name' vram=${vram_gb}GB labels=$runner_labels"
