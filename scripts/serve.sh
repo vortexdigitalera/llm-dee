@@ -120,19 +120,28 @@ if [[ "$ENGINE" == "ollama" ]]; then
   echo "backend: ollama (port ${BACKEND_PORT})"
   echo "ollama tag: ${HF_REPO}"
 
-  # Make sure the daemon is listening on the backend port.
+  # Run our own daemon on the backend port. Stop any installer-started service
+  # (it binds 11434 and would make the CLI talk to the wrong daemon / PID).
   export OLLAMA_HOST="127.0.0.1:${BACKEND_PORT}"
-  if ! curl -fsS "http://${OLLAMA_HOST}" >/dev/null 2>&1; then
-    echo "starting ollama daemon on ${OLLAMA_HOST}"
-    nohup ollama serve > vllm.log 2>&1 &
-    echo $! > state/vllm.pid
-    for i in $(seq 1 60); do
-      if curl -fsS "http://${OLLAMA_HOST}" >/dev/null 2>&1; then
-        echo "ollama daemon ready after ${i}s"; break
-      fi
-      sleep 1
-    done
+  if command -v systemctl >/dev/null 2>&1; then
+    sudo systemctl stop ollama 2>/dev/null || true
   fi
+  pkill -f 'ollama serve' 2>/dev/null || true
+  sleep 1
+  echo "starting ollama daemon on ${OLLAMA_HOST}"
+  nohup ollama serve > vllm.log 2>&1 &
+  echo $! > state/vllm.pid
+  for i in $(seq 1 60); do
+    if curl -fsS "http://${OLLAMA_HOST}/api/tags" >/dev/null 2>&1; then
+      echo "ollama daemon ready after ${i}s"; break
+    fi
+    if ! kill -0 "$(cat state/vllm.pid)" 2>/dev/null; then
+      echo "::error::ollama daemon died at startup — last 50 log lines:"
+      tail -n 50 vllm.log || true
+      exit 1
+    fi
+    sleep 1
+  done
 
   # Ollama's `hf.co` pull fails on gated repos (HF redirects to huggingface.co
   # auth realm and Ollama rejects the host mismatch). Download the GGUF blob
@@ -163,9 +172,7 @@ FROM ${GGUF_PATH}
 EOF
   ollama create "${SERVED_MODEL_NAME}" -f "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" 2>&1 | tee -a vllm.log
 
-  # Ollama already exposes /v1 on its own port; nothing else to start.
-  # Record the daemon pid for keep-alive checks.
-  pgrep -f 'ollama serve' > state/vllm.pid || true
+  # Ollama exposes /v1 on its own port; state/vllm.pid already holds the daemon PID.
 
 elif [[ "$ENGINE" == "mlx" ]]; then
   # MLX OpenAI-compatible server. It does not understand vLLM args; pass only
