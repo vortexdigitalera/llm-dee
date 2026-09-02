@@ -28,10 +28,11 @@ HF_REPO = os.environ.get("HF_REPO", "")
 PUBLIC_URL = os.environ.get("TUNNEL_PUBLIC_HOSTNAME", "").rstrip("/")
 START = time.time()
 
-# The backend (MLX) serves the model under its HF repo id, not the catalog's
-# "served name". Use the repo id as the canonical model id for API calls, and
-# rewrite any request that uses the served-name alias so it reaches the backend.
-MODEL_ID = HF_REPO or MODEL
+# The backend serves the model under a canonical id:
+#   - MLX/vLLM: the HF repo id (rewrite served-name alias -> repo id)
+#   - Ollama:   the served-name alias itself (we `ollama create` that name)
+# For Ollama, HF_REPO is an hf.co tag the daemon doesn't know, so don't rewrite.
+MODEL_ID = MODEL if HF_REPO.startswith("hf.co/") else (HF_REPO or MODEL)
 
 
 def _uptime() -> str:

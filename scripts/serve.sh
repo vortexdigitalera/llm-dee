@@ -65,6 +65,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip
 if [[ "$ENGINE" == "ollama" ]]; then
+  # huggingface_hub downloads the GGUF (handles gated-repo auth); Ollama serves it.
+  python3 -m pip install "huggingface_hub[hf_transfer]"
   # Ollama is installed as a system service; ensure the CLI is available.
   if ! command -v ollama >/dev/null 2>&1; then
     echo "::group::Install Ollama"
