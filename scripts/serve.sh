@@ -132,14 +132,28 @@ if [[ "$ENGINE" == "ollama" ]]; then
     done
   fi
 
-  echo "pulling ${HF_REPO} ..."
-  ollama pull "${HF_REPO}" 2>&1 | tee -a vllm.log
+  # Ollama's `hf.co` pull fails on gated repos (HF redirects to huggingface.co
+  # auth realm and Ollama rejects the host mismatch). Download the GGUF blob
+  # directly with huggingface_hub (handles HF_TOKEN auth), then `ollama create`
+  # from a local Modelfile pointing at the file.
+  # HF_REPO format: hf.co/<org>/<repo>:<filename>
+  GGUF_FILE="${HF_REPO##*:}"
+  HF_GGUF_REPO="${HF_REPO#hf.co/}"; HF_GGUF_REPO="${HF_GGUF_REPO%%:*}"
+  echo "downloading ${GGUF_FILE} from ${HF_GGUF_REPO} via huggingface_hub ..."
+  python3 -m pip install --quiet "huggingface_hub[hf_transfer]"
+  GGUF_PATH="$(python3 - "$HF_GGUF_REPO" "$GGUF_FILE" <<'PY'
+import sys
+from huggingface_hub import hf_hub_download
+print(hf_hub_download(sys.argv[1], sys.argv[2]))
+PY
+)"
+  echo "downloaded to ${GGUF_PATH}"
 
-  # Create a Modelfile alias so the OpenAI /v1/models endpoint shows SERVED_MODEL_NAME.
+  # Create a Modelfile from the local GGUF blob.
   MODEL_ALIAS_DIR="${HF_HOME}/ollama-aliases"
   mkdir -p "${MODEL_ALIAS_DIR}"
   cat > "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" <<EOF
-FROM ${HF_REPO}
+FROM ${GGUF_PATH}
 EOF
   ollama create "${SERVED_MODEL_NAME}" -f "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" 2>&1 | tee -a vllm.log
 
