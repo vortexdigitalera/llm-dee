@@ -138,9 +138,13 @@ if [[ "$ENGINE" == "ollama" ]]; then
   # auth realm and Ollama rejects the host mismatch). Download the GGUF blob
   # directly with huggingface_hub (handles HF_TOKEN auth), then `ollama create`
   # from a local Modelfile pointing at the file.
-  # HF_REPO format: hf.co/<org>/<repo>:<filename>
+  # HF_REPO format: hf.co/<org>/<repo>:<filename>  (the tag may omit .gguf)
   GGUF_FILE="${HF_REPO##*:}"
   HF_GGUF_REPO="${HF_REPO#hf.co/}"; HF_GGUF_REPO="${HF_GGUF_REPO%%:*}"
+  # The catalog tag is the quant name (e.g. ...-IQ2_XXS); the blob is <name>.gguf.
+  if [[ "${GGUF_FILE}" != *.gguf ]]; then
+    GGUF_FILE="${GGUF_FILE}.gguf"
+  fi
   echo "downloading ${GGUF_FILE} from ${HF_GGUF_REPO} via huggingface_hub ..."
   python3 -m pip install --quiet "huggingface_hub[hf_transfer]"
   GGUF_PATH="$(python3 - "$HF_GGUF_REPO" "$GGUF_FILE" <<'PY'
