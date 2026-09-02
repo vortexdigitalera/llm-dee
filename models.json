@@ -204,6 +204,27 @@
             "min_vram_gb": 30,
             "extra_vllm_args": []
         },
+        "qwen3.8-27b-uncensored-mlx": {
+            "hf_repo": "orcarouter/Qwen3.8-27B-Uncensored-MLX",
+            "description": "OrcaRouter Qwen3.8 27B uncensored in MLX format (root repo is 4-bit, ~15 GB). Medium quant for Apple Silicon/Metal. Needs a macOS runner with at least 16 GB unified memory; the GitHub-hosted macos-latest 7 GB runner will OOM.",
+            "runner_labels": [
+                "self-hosted",
+                "macos",
+                "metal"
+            ],
+            "requires_hf_token": true,
+            "quantizations": {
+                "4bit": {
+                    "repo": "orcarouter/Qwen3.8-27B-Uncensored-MLX",
+                    "dtype": "float16"
+                }
+            },
+            "default_quantization": "4bit",
+            "max_model_len": 8192,
+            "gpu_memory_utilization": 0.85,
+            "min_vram_gb": 16,
+            "extra_vllm_args": []
+        },
         "qwen2.5-1.5b-mlx-4bit": {
             "hf_repo": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
             "description": "MLX-native 4-bit Qwen2.5 1.5B — the model to use on the macos-latest (Apple Silicon/Metal) path. Fits comfortably in a hosted runner's unified memory.",
