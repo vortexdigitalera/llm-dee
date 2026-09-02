@@ -17,6 +17,8 @@ CATALOG = REPO_ROOT / "models.json"
 SCHEMA = REPO_ROOT / "models.schema.json"
 
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+# Ollama tags can reference HF repos via hf.co/<org>/<repo>:<tag>
+OLLAMA_TAG_RE = re.compile(r"^hf\.co/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$")
 KNOWN_QUANTS = {"awq", "gptq", "fp8", "nvfp4", "compressed-tensors", "squeezellm", "marlin", "none"}
 KNOWN_DTYPES = {"auto", "float16", "bfloat16", "float32"}
 
@@ -50,8 +52,9 @@ def minimal_validate(catalog: dict) -> list[str]:
 
         for qname, q in quants.items():
             qwhere = f"{where}.quantizations.{qname}"
-            if not REPO_RE.match(q.get("repo", "")):
-                err(errors, f"{qwhere}.repo '{q.get('repo')}' is not a valid 'org/repo'")
+            repo = q.get("repo", "")
+            if not (REPO_RE.match(repo) or OLLAMA_TAG_RE.match(repo)):
+                err(errors, f"{qwhere}.repo '{repo}' is not a valid 'org/repo' or Ollama hf.co tag")
             if "quantization" in q and q["quantization"] not in KNOWN_QUANTS:
                 err(errors, f"{qwhere}.quantization '{q['quantization']}' not in {sorted(KNOWN_QUANTS)}")
             if "dtype" in q and q["dtype"] not in KNOWN_DTYPES:
