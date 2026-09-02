@@ -88,6 +88,9 @@ def main() -> None:
     runner_labels = model.get("runner_labels", defaults.get("runner_labels", ["self-hosted", "gpu"]))
     vllm_version = model.get("vllm_version", defaults.get("vllm_version", "0.6.4.post1"))
     served_name = model.get("served_model_name") or defaults.get("served_model_name") or model_key
+    engine = model.get("engine", defaults.get("engine", "")).strip().lower()
+    if not engine:
+        engine = "mlx" if device == "metal" else "vllm"
 
     # Device override (cuda | metal) from detect_accel.sh. On Metal we force a
     # CPU/Metal-friendly dtype and drop GPU-only flags; quantization that needs
@@ -95,13 +98,13 @@ def main() -> None:
     device = os.environ.get("INPUT_DEVICE", "").strip().lower()
     if device == "metal":
         dtype = "float16"
-        if quantization and quantization not in ("none", ""):
+        if engine != "ollama" and quantization and quantization not in ("none", ""):
             print(
                 f"::warning::quantization '{quantization}' needs CUDA kernels; "
                 "ignoring it on Apple Metal (using unquantized fp16 weights).",
                 file=sys.stderr,
             )
-        quantization = None
+            quantization = None
 
     # Download dir: honor HF_HOME (set by the workflow to the cached path) so
     # weights land in the actions/cache directory and get reused across runs.
@@ -116,10 +119,11 @@ def main() -> None:
         "--max-model-len", str(max_model_len),
         "--download-dir", download_dir,
     ]
-    if device != "metal":
-        # GPU memory utilization is meaningless on the Metal/CPU backend.
+    if device != "metal" and engine != "ollama":
+        # GPU memory utilization is meaningless on the Metal/CPU backend and
+        # ignored by the Ollama engine.
         args += ["--gpu-memory-utilization", str(gpu_mem_util)]
-    if quantization and quantization != "none":
+    if engine != "ollama" and quantization and quantization != "none":
         args += ["--quantization", quantization]
     args += model.get("extra_vllm_args", [])
     extra = os.environ.get("INPUT_EXTRA_ARGS", "").strip()
@@ -145,6 +149,7 @@ def main() -> None:
         "SERVED_MODEL_NAME": served_name,
         "RESOLVED_QUANTIZATION": quant_key,
         "DEVICE": device or "cuda",
+        "ENGINE": engine,
     }
     output_values = {
         "runner_labels": json.dumps(runner_labels),
@@ -153,6 +158,7 @@ def main() -> None:
         "served_model_name": served_name,
         "resolved_quantization": quant_key,
         "device": device or "cuda",
+        "engine": engine,
     }
 
     github_env = os.environ.get("GITHUB_ENV")

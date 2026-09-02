@@ -13,13 +13,14 @@ on:
         required: true
         type: choice
         options:
+          - qwen3.8-27b-uncensored-gguf-ollama
           - qwen3.8-27b-uncensored-mlx
           - qwen2.5-1.5b-mlx-4bit
           - qwen3.8-27b-uncensored
           - qwen3.8-flash-next-uncensored
           - glm-5.3-flash-uncensored
           - gemma-4-26b-a4b-it-uncensored
-        default: qwen3.8-27b-uncensored-mlx
+        default: qwen3.8-27b-uncensored-gguf-ollama
       ttl_minutes:
         description: "Keep alive (min, max 360)"
         required: false
@@ -105,13 +106,14 @@ jobs:
             hf-${{ steps.resolve.outputs.hf_repo }}-
             hf-
 
-      - name: Start vLLM
+      - name: Start LLM server
         run: |
           mkdir -p state
           if [[ "${{ inputs.quick_run }}" == "true" ]]; then
             echo "quick_run: skipping in-runner warmup"
             export SKIP_WARMUP=1
           fi
+          export ENGINE="${{ steps.resolve.outputs.engine }}"
           bash scripts/serve.sh
 
       - name: Start Cloudflare quick tunnel
@@ -167,7 +169,7 @@ jobs:
             echo "| **Logs** | \`${URL}/logs\` |"
             echo "| **Model** | \`${{ steps.resolve.outputs.served_model_name }}\` |"
             echo "| **HF repo** | \`${{ steps.resolve.outputs.hf_repo }}\` |"
-            echo "| **Backend** | ${{ steps.det.outputs.device }} |"
+            echo "| **Backend** | ${{ steps.det.outputs.device }} / ${{ steps.resolve.outputs.engine }} |"
             echo "| **TTL** | ${{ steps.ttl.outputs.minutes }} min |"
             echo ""
             echo '```bash'

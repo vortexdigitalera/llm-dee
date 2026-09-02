@@ -48,6 +48,9 @@ outputs:
   device:
     description: "Target accelerator"
     value: ${{ steps.resolve.outputs.device }}
+  engine:
+    description: "Serving engine (vllm|mlx|ollama)"
+    value: ${{ steps.resolve.outputs.engine }}
 
 runs:
   using: composite

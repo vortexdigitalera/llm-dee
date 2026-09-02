@@ -78,7 +78,7 @@
             "properties": {
                 "repo": {
                     "type": "string",
-                    "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+                    "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.:-]+(:[A-Za-z0-9_.-]+)?$|^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$"
                 },
                 "quantization": {
                     "type": "string",
@@ -171,6 +171,14 @@
                     "items": {
                         "type": "string"
                     }
+                },
+                "engine": {
+                    "type": "string",
+                    "enum": [
+                        "vllm",
+                        "mlx",
+                        "ollama"
+                    ]
                 }
             }
         }

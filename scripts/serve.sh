@@ -19,17 +19,33 @@ set -euo pipefail
 : "${SERVED_MODEL_NAME:=model}"
 : "${DEVICE:=cuda}"
 
+# --- engine selection -------------------------------------------------------
+# ENGINE comes from the model catalog (vllm | mlx | ollama). Falls back by device.
+#   vllm   -> vLLM (OpenAI-compatible server) on CUDA
+#   mlx    -> mlx_lm.server on Apple Silicon
+#   ollama -> Ollama server (pulls GGUF, serves OpenAI-compatible /v1)
+ENGINE="${ENGINE:-}"
+if [[ -z "$ENGINE" ]]; then
+  if [[ "$DEVICE" == "metal" ]]; then
+    ENGINE="mlx"
+  else
+    ENGINE="vllm"
+  fi
+fi
+
 # --- accelerator guard: never deploy on plain CPU ---------------------------
 # DEVICE comes from detect_accel.sh (cuda | metal).
 #   cuda  -> vLLM (OpenAI-compatible server)
-#   metal -> MLX (mlx-lm) — vLLM publishes no Apple-Silicon wheel and cannot be
-#            built on macOS, so the native Apple backend is MLX. mlx_lm.server
-#            exposes an OpenAI-compatible /v1/chat/completions endpoint.
+#   metal -> MLX (mlx-lm) or Ollama — vLLM publishes no Apple-Silicon wheel.
 if [[ "$DEVICE" == "metal" ]]; then
-  echo "device: Apple Metal (macOS) — MLX backend (mlx-lm)"
+  echo "device: Apple Metal (macOS) — engine: ${ENGINE}"
 elif [[ "$DEVICE" != "cuda" ]]; then
   echo "::error::unknown DEVICE='$DEVICE' (expected cuda|metal). Refusing to deploy on plain CPU."
   exit 1
+fi
+
+if [[ "$ENGINE" == "ollama" && "$DEVICE" == "cuda" ]]; then
+  echo "::warning::Ollama engine selected on CUDA; continuing, but vllm is usually preferred on NVIDIA."
 fi
 
 echo "::group::Install serving backend"
@@ -40,7 +56,18 @@ python3 -m venv .venv
 # shellcheck disable=SC1091
 source .venv/bin/activate
 python3 -m pip install --upgrade pip
-if [[ "$DEVICE" == "metal" ]]; then
+if [[ "$ENGINE" == "ollama" ]]; then
+  # Ollama is installed as a system service; ensure the CLI is available.
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "::group::Install Ollama"
+    if [[ "$DEVICE" == "metal" ]]; then
+      curl -fsSL https://ollama.com/install.sh | sh
+    else
+      curl -fsSL https://ollama.com/install.sh | sh
+    fi
+    echo "::endgroup::"
+  fi
+elif [[ "$DEVICE" == "metal" ]]; then
   python3 -m pip install "mlx-lm" "huggingface_hub[hf_transfer]"
 else
   python3 -m pip install "vllm==${VLLM_VERSION}" "huggingface_hub[hf_transfer]"
@@ -79,7 +106,44 @@ echo "served: ${SERVED_MODEL_NAME}"
 # Backend serves on 8001; the landing/log-viewer proxy faces the public on 8000.
 BACKEND_PORT=8001
 
-if [[ "$DEVICE" == "metal" ]]; then
+if [[ "$ENGINE" == "ollama" ]]; then
+  # Ollama OpenAI-compatible server. HF_REPO is expected to be an Ollama tag
+  # (e.g. hf.co/orcarouter/Qwen3.8-27B-Uncensored-GGUF:Qwen3.8-27B-Uncensored-IQ2_XXS).
+  # Start the daemon if it isn't running, pull the model, then create a model
+  # alias under the served name so /v1/models reports the friendly id.
+  echo "backend: ollama (port ${BACKEND_PORT})"
+  echo "ollama tag: ${HF_REPO}"
+
+  # Make sure the daemon is listening on the backend port.
+  export OLLAMA_HOST="127.0.0.1:${BACKEND_PORT}"
+  if ! curl -fsS "http://${OLLAMA_HOST}" >/dev/null 2>&1; then
+    echo "starting ollama daemon on ${OLLAMA_HOST}"
+    nohup ollama serve > vllm.log 2>&1 &
+    echo $! > state/vllm.pid
+    for i in $(seq 1 60); do
+      if curl -fsS "http://${OLLAMA_HOST}" >/dev/null 2>&1; then
+        echo "ollama daemon ready after ${i}s"; break
+      fi
+      sleep 1
+    done
+  fi
+
+  echo "pulling ${HF_REPO} ..."
+  ollama pull "${HF_REPO}" 2>&1 | tee -a vllm.log
+
+  # Create a Modelfile alias so the OpenAI /v1/models endpoint shows SERVED_MODEL_NAME.
+  MODEL_ALIAS_DIR="${HF_HOME}/ollama-aliases"
+  mkdir -p "${MODEL_ALIAS_DIR}"
+  cat > "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" <<EOF
+FROM ${HF_REPO}
+EOF
+  ollama create "${SERVED_MODEL_NAME}" -f "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" 2>&1 | tee -a vllm.log
+
+  # Ollama already exposes /v1 on its own port; nothing else to start.
+  # Record the daemon pid for keep-alive checks.
+  pgrep -f 'ollama serve' > state/vllm.pid || true
+
+elif [[ "$ENGINE" == "mlx" ]]; then
   # MLX OpenAI-compatible server. It does not understand vLLM args; pass only
   # what it supports.
   echo "backend: mlx_lm.server (port ${BACKEND_PORT})"
@@ -88,6 +152,7 @@ if [[ "$DEVICE" == "metal" ]]; then
     --host 127.0.0.1 \
     --port "${BACKEND_PORT}" \
     > vllm.log 2>&1 &
+  echo $! > state/vllm.pid
 else
   echo "backend: vLLM (port ${BACKEND_PORT})"
   echo "args:    ${VLLM_ARGS}"
@@ -98,8 +163,8 @@ else
     ${VLLM_ARGS} \
     "${API_KEY_ARGS[@]}" \
     > vllm.log 2>&1 &
+  echo $! > state/vllm.pid
 fi
-echo $! > state/vllm.pid
 echo "server pid: $(cat state/vllm.pid)"
 echo "::endgroup::"
 
@@ -110,13 +175,13 @@ for i in $(seq 1 240); do
     echo "backend is healthy after ~$((i * 5))s"
     break
   fi
-  if ! kill -0 "$(cat state/vllm.pid)" 2>/dev/null; then
-    echo "::error::vLLM process died — last 200 log lines:"
+  if [[ "$ENGINE" != "ollama" ]] && ! kill -0 "$(cat state/vllm.pid)" 2>/dev/null; then
+    echo "::error::vLLM/MLX process died — last 200 log lines:"
     tail -n 200 vllm.log || true
     exit 1
   fi
   if [[ "$i" == "240" ]]; then
-    echo "::error::vLLM did not become healthy within 20 minutes"
+    echo "::error::backend did not become healthy within 20 minutes"
     tail -n 200 vllm.log || true
     exit 1
   fi
