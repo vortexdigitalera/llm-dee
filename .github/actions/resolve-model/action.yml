@@ -1,15 +1,16 @@
 name: Resolve model from catalog
 
 description: >-
-  Reads models.json and exports the selected model's vLLM flags, HF repo id,
-  env vars and runner labels as step outputs / $GITHUB_ENV.
+  Reads models.json and exports the selected model's engine, runner labels,
+  HF repo / Ollama tag, engine flags, env vars and other launch config as
+  step outputs and $GITHUB_ENV.
 
 inputs:
   model_key:
     description: "Key of the model in models.json"
     required: true
   quantization:
-    description: "Requested quantization (fp16|bf16|fp8|awq|gptq|gguf|none)"
+    description: "Requested quantization (empty = catalog default)"
     required: false
     default: ""
   max_model_len:
@@ -21,11 +22,11 @@ inputs:
     required: false
     default: "0"
   extra_args:
-    description: "Extra raw vLLM CLI args appended last"
+    description: "Extra raw engine CLI args appended last"
     required: false
     default: ""
   device:
-    description: "Target accelerator (cuda|metal); empty = cuda"
+    description: "Target accelerator (cuda|metal|cpu); empty = cuda"
     required: false
     default: ""
 
@@ -34,11 +35,11 @@ outputs:
     description: "JSON array of runner labels for runs-on"
     value: ${{ steps.resolve.outputs.runner_labels }}
   hf_repo:
-    description: "Resolved Hugging Face repo id"
+    description: "Resolved Hugging Face repo id or Ollama tag"
     value: ${{ steps.resolve.outputs.hf_repo }}
-  vllm_version:
-    description: "Pinned vLLM version"
-    value: ${{ steps.resolve.outputs.vllm_version }}
+  engine_version:
+    description: "Pinned engine version (vLLM, mlx-lm, or Ollama installer)"
+    value: ${{ steps.resolve.outputs.engine_version }}
   served_model_name:
     description: "Served model name"
     value: ${{ steps.resolve.outputs.served_model_name }}
@@ -51,6 +52,17 @@ outputs:
   engine:
     description: "Serving engine (vllm|mlx|ollama)"
     value: ${{ steps.resolve.outputs.engine }}
+  engine_args:
+    description: "Resolved engine CLI args (for vLLM/MLX)"
+    value: ${{ steps.resolve.outputs.engine_args }}
+  model_env_json:
+    description: "Per-model env vars as JSON"
+    value: ${{ steps.resolve.outputs.model_env_json }}
+
+  # Backward-compatible aliases
+  vllm_version:
+    description: "Deprecated alias for engine_version"
+    value: ${{ steps.resolve.outputs.engine_version }}
 
 runs:
   using: composite

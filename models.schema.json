@@ -29,6 +29,9 @@
                 "vllm_version": {
                     "type": "string"
                 },
+                "engine_version": {
+                    "type": "string"
+                },
                 "dtype": {
                     "type": "string",
                     "enum": [
@@ -154,6 +157,9 @@
                 "vllm_version": {
                     "type": "string"
                 },
+                "engine_version": {
+                    "type": "string"
+                },
                 "served_model_name": {
                     "type": [
                         "string",
@@ -167,6 +173,12 @@
                     }
                 },
                 "extra_vllm_args": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "extra_engine_args": {
                     "type": "array",
                     "items": {
                         "type": "string"

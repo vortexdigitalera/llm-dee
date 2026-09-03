@@ -1,11 +1,9 @@
-name: Run LLM (vLLM / MLX / Ollama + Cloudflare tunnel)
+name: Run LLM (dispatcher)
 
-# Core engine workflow. Runs on GitHub-hosted ubuntu-latest (Ollama CPU) or a
-# self-hosted GPU/macOS runner. Detects the accelerator, deploys the selected
-# engine (vLLM on CUDA, MLX on Apple Silicon, Ollama for GGUF on CPU/GPU),
-# caches the HF weights for reuse, and exposes a public OpenAI-compatible
-# endpoint (plus Ollama native REST /api/* when using the Ollama engine) via a
-# Cloudflare quick tunnel (no Argo, no account, no token).
+# Dispatcher workflow. Resolves the requested model from models.json, then
+# delegates to the engine-specific reusable workflow (vLLM / MLX / Ollama).
+# This keeps each engine's runner selection, install, health checks and
+# keep-alive logic separate and maintainable.
 
 on:
   workflow_dispatch:
@@ -35,7 +33,12 @@ on:
         type: boolean
         default: false
       advanced:
-        description: "Advanced (optional): quant=... len=... args=..."
+        description: "Advanced (optional): quant=... len=... mem=... args=..."
+        required: false
+        type: string
+        default: ""
+      quantization:
+        description: "Quantization override (optional; also accepts quant=... in advanced)"
         required: false
         type: string
         default: ""
@@ -48,22 +51,26 @@ permissions:
   contents: read
 
 jobs:
-  serve:
-    name: Serve ${{ inputs.model_key }}
+  resolve:
+    name: Resolve ${{ inputs.model_key }}
     runs-on: ubuntu-latest
-    timeout-minutes: 390
-    env:
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-      CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
-      TUNNEL_PUBLIC_HOSTNAME: ${{ vars.TUNNEL_PUBLIC_HOSTNAME }}
-      HF_HOME: /tmp/llm-dee-hf-cache
+    outputs:
+      runner_labels: ${{ steps.resolve.outputs.runner_labels }}
+      hf_repo: ${{ steps.resolve.outputs.hf_repo }}
+      engine_version: ${{ steps.resolve.outputs.engine_version }}
+      served_model_name: ${{ steps.resolve.outputs.served_model_name }}
+      resolved_quantization: ${{ steps.resolve.outputs.resolved_quantization }}
+      device: ${{ steps.resolve.outputs.device }}
+      engine: ${{ steps.resolve.outputs.engine }}
+      engine_args: ${{ steps.resolve.outputs.engine_args }}
+      model_env_json: ${{ steps.resolve.outputs.model_env_json }}
+      quantization: ${{ steps.adv.outputs.quantization }}
+      max_model_len: ${{ steps.adv.outputs.max_model_len }}
+      gpu_memory_utilization: ${{ steps.adv.outputs.gpu_memory_utilization }}
+      extra_args: ${{ steps.adv.outputs.extra_args }}
+      ttl_minutes: ${{ steps.ttl.outputs.minutes }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Detect accelerator
-        id: det
-        run: bash scripts/detect_accel.sh
 
       - name: Validate catalog
         run: python3 scripts/validate_catalog.py
@@ -73,22 +80,28 @@ jobs:
         env:
           ADVANCED: ${{ inputs.advanced }}
         run: |
-          # Parse "quant=fp8 len=8192 args=--foo bar" from the single advanced field.
-          quant=""; len="0"; args=""
+          quant="${{ inputs.quantization }}"
+          len="0"; mem="0"; args=""
           for tok in $ADVANCED; do
             case "$tok" in
               quant=*) quant="${tok#quant=}" ;;
               len=*)   len="${tok#len=}" ;;
+              mem=*)   mem="${tok#mem=}" ;;
               args=*)  args="${tok#args=}" ;;
-              *)       args="${args:+$args }$tok" ;;  # bare tokens -> extra args
+              *)       args="${args:+$args }$tok" ;;
             esac
           done
           {
             echo "quantization=$quant"
             echo "max_model_len=${len:-0}"
+            echo "gpu_memory_utilization=${mem:-0}"
             echo "extra_args=$args"
           } >> "$GITHUB_OUTPUT"
-          echo "parsed: quant='$quant' len='$len' args='$args'"
+          echo "parsed: quant='$quant' len='$len' mem='$mem' args='$args'"
+
+      - name: Detect accelerator
+        id: det
+        run: bash scripts/detect_accel.sh
 
       - name: Resolve model config
         id: resolve
@@ -97,49 +110,9 @@ jobs:
           model_key: ${{ inputs.model_key }}
           quantization: ${{ steps.adv.outputs.quantization }}
           max_model_len: ${{ steps.adv.outputs.max_model_len }}
+          gpu_memory_utilization: ${{ steps.adv.outputs.gpu_memory_utilization }}
           extra_args: ${{ steps.adv.outputs.extra_args }}
           device: ${{ steps.det.outputs.device }}
-
-      - name: Restore HF cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/llm-dee-hf-cache
-          key: hf-${{ steps.resolve.outputs.hf_repo }}-${{ steps.resolve.outputs.resolved_quantization }}-v1
-          restore-keys: |
-            hf-${{ steps.resolve.outputs.hf_repo }}-
-            hf-
-
-      - name: Start LLM server
-        run: |
-          mkdir -p state
-          if [[ "${{ inputs.quick_run }}" == "true" ]]; then
-            echo "quick_run: skipping in-runner warmup"
-            export SKIP_WARMUP=1
-          fi
-          export ENGINE="${{ steps.resolve.outputs.engine }}"
-          bash scripts/serve.sh
-
-      - name: Start Cloudflare quick tunnel
-        id: tunnel
-        env:
-          SERVED_MODEL_NAME: ${{ steps.resolve.outputs.served_model_name }}
-          HF_REPO: ${{ steps.resolve.outputs.hf_repo }}
-          RESOLVED_QUANTIZATION: ${{ steps.resolve.outputs.resolved_quantization }}
-        run: bash scripts/start_tunnel.sh
-
-      - name: External probe through tunnel
-        if: ${{ inputs.quick_run != true }}
-        run: |
-          URL="${{ steps.tunnel.outputs.endpoint_url }}"
-          # In named-tunnel service mode there is no scraped URL unless a public
-          # hostname was configured in the dashboard — skip the probe then.
-          if [[ "$URL" != http* ]]; then
-            echo "no public URL to probe (named-tunnel service mode) — skipping"
-            exit 0
-          fi
-          ENDPOINT_URL="$URL" \
-          SERVED_MODEL_NAME="${{ steps.resolve.outputs.served_model_name }}" \
-            bash scripts/probe.sh
 
       - name: Compute effective TTL
         id: ttl
@@ -149,9 +122,6 @@ jobs:
             echo "quick_run: TTL forced to 15m"
           else
             ttl="${{ inputs.ttl_minutes }}"
-            # GitHub hard-caps a hosted job at 6h (360m). Clamp so the run
-            # shuts down cleanly and the keepalive can re-dispatch, instead of
-            # being killed abruptly by the platform.
             if [[ "$ttl" -gt 360 ]]; then
               echo "::warning::ttl ${ttl}m exceeds GitHub's 360m job cap — clamping to 360"
               ttl=360
@@ -159,97 +129,62 @@ jobs:
             echo "minutes=${ttl}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Connection info
-        run: |
-          URL="$(cat state/endpoint_url 2>/dev/null || echo '${{ vars.TUNNEL_PUBLIC_HOSTNAME }}')"
-          {
-            echo ""
-            echo "## ✅ Endpoint is live"
-            echo ""
-            echo "| | |"
-            echo "|---|---|"
-            echo "| **Landing / log viewer** | ${URL}/ |"
-            echo "| **Base URL** | \`${URL}\` |"
-            echo "| **OpenAI API** | \`${URL}/v1\` |"
-            echo "| **Chat** | \`POST ${URL}/v1/chat/completions\` |"
-            echo "| **Models** | \`GET ${URL}/v1/models\` |"
-            if [[ "${{ steps.resolve.outputs.engine }}" == "ollama" ]]; then
-              echo "| **Ollama REST** | \`POST ${URL}/api/chat\` &middot; \`POST ${URL}/api/generate\` &middot; \`GET ${URL}/api/tags\` |"
-              echo "| **Tool calling** | \`tools\` field in /v1/chat/completions & /api/chat |"
-            fi
-            echo "| **Logs** | \`${URL}/logs\` |"
-            echo "| **Model** | \`${{ steps.resolve.outputs.served_model_name }}\` |"
-            echo "| **HF repo** | \`${{ steps.resolve.outputs.hf_repo }}\` |"
-            echo "| **Backend** | ${{ steps.det.outputs.device }} / ${{ steps.resolve.outputs.engine }} |"
-            echo "| **TTL** | ${{ steps.ttl.outputs.minutes }} min |"
-            echo ""
-            echo '```bash'
-            echo "curl ${URL}/v1/chat/completions -H 'Content-Type: application/json' \\"
-            echo "  -d '{\"model\":\"${{ steps.resolve.outputs.served_model_name }}\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}'"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          # Also echo a compact table into the log for quick scanning.
-          echo "::notice title=LLM endpoint::${URL}/v1  (landing: ${URL}/)"
-          echo "┌──────────────────────────────────────────────────────────"
-          echo "│ Endpoint live"
-          echo "│   landing : ${URL}/"
-          echo "│   api     : ${URL}/v1"
-          if [[ "${{ steps.resolve.outputs.engine }}" == "ollama" ]]; then
-            echo "│   rest    : ${URL}/api"
-          fi
-          echo "│   logs    : ${URL}/logs"
-          echo "│   model   : ${{ steps.resolve.outputs.served_model_name }}"
-          echo "└──────────────────────────────────────────────────────────"
+  serve-vllm:
+    name: vLLM
+    needs: resolve
+    if: ${{ needs.resolve.outputs.engine == 'vllm' }}
+    uses: ./.github/workflows/serve-vllm.yml
+    with:
+      model_key: ${{ inputs.model_key }}
+      quantization: ${{ needs.resolve.outputs.quantization }}
+      max_model_len: ${{ needs.resolve.outputs.max_model_len }}
+      gpu_memory_utilization: ${{ needs.resolve.outputs.gpu_memory_utilization }}
+      extra_args: ${{ needs.resolve.outputs.extra_args }}
+      ttl_minutes: ${{ needs.resolve.outputs.ttl_minutes }}
+      quick_run: ${{ inputs.quick_run }}
+      runner_labels: ${{ needs.resolve.outputs.runner_labels }}
+      device: ${{ needs.resolve.outputs.device }}
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
 
-      - name: Keep alive for ${{ steps.ttl.outputs.minutes }} minutes
-        env:
-          ENGINE: ${{ steps.resolve.outputs.engine }}
-        run: |
-          ENDPOINT_URL="$(cat state/endpoint_url)"
-          # Engine-aware PID/log filenames (ollama vs vllm/mlx)
-          if [[ "$ENGINE" == "ollama" ]]; then
-            SERVER_PID_FILE=state/ollama.pid
-            SERVER_LOG=ollama.log
-          else
-            SERVER_PID_FILE=state/vllm.pid
-            SERVER_LOG=vllm.log
-          fi
-          echo "Endpoint ${ENDPOINT_URL} alive for ${{ steps.ttl.outputs.minutes }}m"
-          deadline=$(( $(date +%s) + ${{ steps.ttl.outputs.minutes }} * 60 ))
-          while [[ $(date +%s) -lt $deadline ]]; do
-            if ! kill -0 "$(cat "$SERVER_PID_FILE")" 2>/dev/null; then
-              echo "::error::server died during keep-alive"; tail -n 100 "$SERVER_LOG"; exit 1
-            fi
-            if ! kill -0 "$(cat state/landing.pid)" 2>/dev/null; then
-              echo "::error::landing proxy died during keep-alive"; tail -n 50 landing.log; exit 1
-            fi
-            cf_pid="$(cat state/cloudflared.pid)"
-            if [[ "$cf_pid" == "service" ]]; then
-              # named-tunnel service mode: check the service is still up
-              if [[ "$(uname -s)" == "Darwin" ]]; then
-                sudo launchctl list 2>/dev/null | grep -q cloudflared || { echo "::error::cloudflared service not running"; exit 1; }
-              else
-                systemctl is-active --quiet cloudflared || { echo "::error::cloudflared service not active"; exit 1; }
-              fi
-            elif ! kill -0 "$cf_pid" 2>/dev/null; then
-              echo "::error::cloudflared died during keep-alive"; tail -n 50 cloudflared.log; exit 1
-            fi
-            sleep 30
-          done
-          echo "TTL reached — shutting down"
+  serve-mlx:
+    name: MLX
+    needs: resolve
+    if: ${{ needs.resolve.outputs.engine == 'mlx' }}
+    uses: ./.github/workflows/serve-mlx.yml
+    with:
+      model_key: ${{ inputs.model_key }}
+      quantization: ${{ needs.resolve.outputs.quantization }}
+      max_model_len: ${{ needs.resolve.outputs.max_model_len }}
+      gpu_memory_utilization: ${{ needs.resolve.outputs.gpu_memory_utilization }}
+      extra_args: ${{ needs.resolve.outputs.extra_args }}
+      ttl_minutes: ${{ needs.resolve.outputs.ttl_minutes }}
+      quick_run: ${{ inputs.quick_run }}
+      runner_labels: ${{ needs.resolve.outputs.runner_labels }}
+      device: ${{ needs.resolve.outputs.device }}
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
 
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: logs-${{ inputs.model_key }}-${{ github.run_id }}
-          path: |
-            vllm.log
-            ollama.log
-            cloudflared.log
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Stop services
-        if: always()
-        run: bash scripts/stop.sh
+  serve-ollama:
+    name: Ollama
+    needs: resolve
+    if: ${{ needs.resolve.outputs.engine == 'ollama' }}
+    uses: ./.github/workflows/serve-ollama.yml
+    with:
+      model_key: ${{ inputs.model_key }}
+      quantization: ${{ needs.resolve.outputs.quantization }}
+      max_model_len: ${{ needs.resolve.outputs.max_model_len }}
+      gpu_memory_utilization: ${{ needs.resolve.outputs.gpu_memory_utilization }}
+      extra_args: ${{ needs.resolve.outputs.extra_args }}
+      ttl_minutes: ${{ needs.resolve.outputs.ttl_minutes }}
+      quick_run: ${{ inputs.quick_run }}
+      runner_labels: ${{ needs.resolve.outputs.runner_labels }}
+      device: ${{ needs.resolve.outputs.device }}
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}

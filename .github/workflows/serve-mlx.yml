@@ -1,0 +1,184 @@
+name: Serve MLX
+
+on:
+  workflow_call:
+    inputs:
+      model_key:
+        required: true
+        type: string
+      quantization:
+        required: false
+        type: string
+        default: ""
+      max_model_len:
+        required: false
+        type: string
+        default: "0"
+      gpu_memory_utilization:
+        required: false
+        type: string
+        default: "0"
+      extra_args:
+        required: false
+        type: string
+        default: ""
+      ttl_minutes:
+        required: false
+        type: string
+        default: "360"
+      quick_run:
+        required: false
+        type: boolean
+        default: false
+      runner_labels:
+        required: true
+        type: string
+      device:
+        required: true
+        type: string
+    secrets:
+      HF_TOKEN:
+        required: false
+      LLM_API_KEY:
+        required: false
+      CLOUDFLARE_TUNNEL_TOKEN:
+        required: false
+    outputs:
+      endpoint_url:
+        value: ${{ jobs.serve.outputs.endpoint_url }}
+
+jobs:
+  serve:
+    name: Serve ${{ inputs.model_key }} (MLX)
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    timeout-minutes: 390
+    outputs:
+      endpoint_url: ${{ steps.tunnel.outputs.endpoint_url }}
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+      TUNNEL_PUBLIC_HOSTNAME: ${{ vars.TUNNEL_PUBLIC_HOSTNAME }}
+      HF_HOME: /tmp/llm-dee-hf-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate catalog
+        run: python3 scripts/validate_catalog.py
+
+      - name: Resolve model config
+        id: resolve
+        uses: ./.github/actions/resolve-model
+        with:
+          model_key: ${{ inputs.model_key }}
+          quantization: ${{ inputs.quantization }}
+          max_model_len: ${{ inputs.max_model_len }}
+          gpu_memory_utilization: ${{ inputs.gpu_memory_utilization }}
+          extra_args: ${{ inputs.extra_args }}
+          device: ${{ inputs.device }}
+
+      - name: Restore HF cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/llm-dee-hf-cache
+          key: hf-${{ steps.resolve.outputs.hf_repo }}-${{ steps.resolve.outputs.resolved_quantization }}-v1
+          restore-keys: |
+            hf-${{ steps.resolve.outputs.hf_repo }}-
+            hf-
+
+      - name: Start MLX server
+        run: |
+          mkdir -p state
+          if [[ "${{ inputs.quick_run }}" == "true" ]]; then
+            export SKIP_WARMUP=1
+          fi
+          export ENGINE="${{ steps.resolve.outputs.engine }}"
+          bash scripts/serve.sh
+
+      - name: Start Cloudflare tunnel
+        id: tunnel
+        env:
+          SERVED_MODEL_NAME: ${{ steps.resolve.outputs.served_model_name }}
+          HF_REPO: ${{ steps.resolve.outputs.hf_repo }}
+          RESOLVED_QUANTIZATION: ${{ steps.resolve.outputs.resolved_quantization }}
+        run: bash scripts/start_tunnel.sh
+
+      - name: External probe through tunnel
+        if: ${{ inputs.quick_run != 'true' }}
+        run: |
+          URL="${{ steps.tunnel.outputs.endpoint_url }}"
+          if [[ "$URL" != http* ]]; then
+            echo "no public URL to probe (named-tunnel service mode) — skipping"
+            exit 0
+          fi
+          ENDPOINT_URL="$URL" \
+          SERVED_MODEL_NAME="${{ steps.resolve.outputs.served_model_name }}" \
+            bash scripts/probe.sh
+
+      - name: Connection info
+        run: |
+          URL="$(cat state/endpoint_url 2>/dev/null || echo '${{ vars.TUNNEL_PUBLIC_HOSTNAME }}')"
+          {
+            echo ""
+            echo "## ✅ MLX endpoint is live"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Landing / logs** | ${URL}/ |"
+            echo "| **Base URL** | \`${URL}\` |"
+            echo "| **OpenAI API** | \`${URL}/v1\` |"
+            echo "| **Chat** | \`POST ${URL}/v1/chat/completions\` |"
+            echo "| **Models** | \`GET ${URL}/v1/models\` |"
+            echo "| **Logs** | \`${URL}/logs\` |"
+            echo "| **Model** | \`${{ steps.resolve.outputs.served_model_name }}\` |"
+            echo "| **HF repo** | \`${{ steps.resolve.outputs.hf_repo }}\` |"
+            echo "| **Backend** | ${{ inputs.device }} / mlx |"
+            echo "| **TTL** | ${{ inputs.ttl_minutes }} min |"
+            echo ""
+            echo '```bash'
+            echo "curl ${URL}/v1/chat/completions -H 'Content-Type: application/json' \\"
+            echo "  -d '{\"model\":\"${{ steps.resolve.outputs.served_model_name }}\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}'"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=MLX endpoint::${URL}/v1  (landing: ${URL}/)"
+
+      - name: Keep alive for ${{ inputs.ttl_minutes }} minutes
+        run: |
+          ENDPOINT_URL="$(cat state/endpoint_url)"
+          deadline=$(( $(date +%s) + ${{ inputs.ttl_minutes }} * 60 ))
+          while [[ $(date +%s) -lt $deadline ]]; do
+            if ! kill -0 "$(cat state/mlx.pid)" 2>/dev/null; then
+              echo "::error::MLX died during keep-alive"; tail -n 100 mlx.log; exit 1
+            fi
+            if ! kill -0 "$(cat state/landing.pid)" 2>/dev/null; then
+              echo "::error::landing proxy died during keep-alive"; tail -n 50 landing.log; exit 1
+            fi
+            cf_pid="$(cat state/cloudflared.pid)"
+            if [[ "$cf_pid" == "service" ]]; then
+              if [[ "$(uname -s)" == "Darwin" ]]; then
+                sudo launchctl list 2>/dev/null | grep -q cloudflared || { echo "::error::cloudflared service not running"; exit 1; }
+              else
+                systemctl is-active --quiet cloudflared || { echo "::error::cloudflared service not active"; exit 1; }
+              fi
+            elif ! kill -0 "$cf_pid" 2>/dev/null; then
+              echo "::error::cloudflared died during keep-alive"; tail -n 50 cloudflared.log; exit 1
+            fi
+            sleep 30
+          done
+          echo "TTL reached — shutting down"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ inputs.model_key }}-${{ github.run_id }}
+          path: |
+            mlx.log
+            landing.log
+            cloudflared.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Stop services
+        if: always()
+        run: bash scripts/stop.sh

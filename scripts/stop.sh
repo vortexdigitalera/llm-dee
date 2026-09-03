@@ -3,7 +3,7 @@
 # Handles both vLLM/MLX (state/vllm.pid) and Ollama (state/ollama.pid).
 set -uo pipefail
 
-for name in vllm ollama landing cloudflared; do
+for name in vllm mlx ollama landing cloudflared; do
   pidfile="state/${name}.pid"
   if [[ -f "$pidfile" ]]; then
     pid="$(cat "$pidfile")"

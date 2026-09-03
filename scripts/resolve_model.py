@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve a model + quantization from models.json into vLLM launch config.
+"""Resolve a model + quantization from models.json into engine launch config.
 
 Reads inputs from environment variables (set by the composite action or by
 hand) and writes results to $GITHUB_OUTPUT and $GITHUB_ENV when present,
@@ -10,14 +10,18 @@ Inputs (env):
   INPUT_QUANTIZATION     - requested quantization, "" = catalog default
   INPUT_MAX_MODEL_LEN    - "0" = catalog default
   INPUT_GPU_MEM_UTIL     - "0" = catalog default
-  INPUT_EXTRA_ARGS       - extra raw vLLM args appended last
+  INPUT_EXTRA_ARGS       - extra raw engine args appended last
   CATALOG_PATH           - path to models.json (default: repo root)
 
 Outputs:
-  GITHUB_ENV:    RUNNER_LABELS_JSON, HF_REPO, VLLM_VERSION, VLLM_ARGS,
-                 MODEL_ENV_JSON, SERVED_MODEL_NAME, RESOLVED_QUANTIZATION
-  GITHUB_OUTPUT: runner_labels, hf_repo, vllm_version, served_model_name,
-                 resolved_quantization
+  GITHUB_ENV:    RUNNER_LABELS_JSON, HF_REPO, ENGINE_VERSION, ENGINE_ARGS,
+                 MODEL_ENV_JSON, SERVED_MODEL_NAME, RESOLVED_QUANTIZATION,
+                 DEVICE, ENGINE
+                 (plus backward-compatible VLLM_VERSION, VLLM_ARGS)
+  GITHUB_OUTPUT: runner_labels, hf_repo, engine_version, engine_args,
+                 model_env_json, served_model_name, resolved_quantization,
+                 device, engine
+                 (plus backward-compatible vllm_version)
 """
 from __future__ import annotations
 
@@ -86,16 +90,16 @@ def main() -> None:
     )
 
     runner_labels = model.get("runner_labels", defaults.get("runner_labels", ["self-hosted", "gpu"]))
-    vllm_version = model.get("vllm_version", defaults.get("vllm_version", "0.6.4.post1"))
+    engine_version = model.get("engine_version") or model.get("vllm_version") or defaults.get("engine_version") or defaults.get("vllm_version", "0.11.0")
     served_name = model.get("served_model_name") or defaults.get("served_model_name") or model_key
     engine = model.get("engine", defaults.get("engine", "")).strip().lower()
-    if not engine:
-        engine = "mlx" if device == "metal" else "vllm"
 
     # Device override (cuda | metal | cpu) from detect_accel.sh. On Metal/CPU we
     # force a CPU-friendly dtype and drop GPU-only flags; quantization that needs
     # CUDA kernels (awq/gptq/fp8/nvfp4) is not available there.
     device = os.environ.get("INPUT_DEVICE", "").strip().lower()
+    if not engine:
+        engine = "mlx" if device == "metal" else "vllm"
     if device in ("metal", "cpu"):
         dtype = "float16"
         if engine != "ollama" and quantization and quantization not in ("none", ""):
@@ -110,7 +114,7 @@ def main() -> None:
     # weights land in the actions/cache directory and get reused across runs.
     download_dir = os.environ.get("HF_HOME", "/tmp/hf-cache")
 
-    # Build vLLM CLI args (consumed by scripts/serve.sh)
+    # Build engine CLI args (consumed by scripts/serve.sh)
     args: list[str] = [
         "--host", "0.0.0.0",
         "--port", "8000",
@@ -125,7 +129,7 @@ def main() -> None:
         args += ["--gpu-memory-utilization", str(gpu_mem_util)]
     if engine != "ollama" and quantization and quantization != "none":
         args += ["--quantization", quantization]
-    args += model.get("extra_vllm_args", [])
+    args += model.get("extra_engine_args") or model.get("extra_vllm_args", [])
     extra = os.environ.get("INPUT_EXTRA_ARGS", "").strip()
     if extra:
         args += shlex.split(extra)
@@ -143,22 +147,29 @@ def main() -> None:
     env_values = {
         "RUNNER_LABELS_JSON": json.dumps(runner_labels),
         "HF_REPO": hf_repo,
-        "VLLM_VERSION": vllm_version,
-        "VLLM_ARGS": " ".join(shlex.quote(a) for a in args),
+        "ENGINE_VERSION": engine_version,
+        "ENGINE_ARGS": " ".join(shlex.quote(a) for a in args),
         "MODEL_ENV_JSON": json.dumps(env),
         "SERVED_MODEL_NAME": served_name,
         "RESOLVED_QUANTIZATION": quant_key,
         "DEVICE": device or "cuda",
         "ENGINE": engine,
+        # Backward-compatible aliases
+        "VLLM_VERSION": engine_version,
+        "VLLM_ARGS": " ".join(shlex.quote(a) for a in args),
     }
     output_values = {
         "runner_labels": json.dumps(runner_labels),
         "hf_repo": hf_repo,
-        "vllm_version": vllm_version,
+        "engine_version": engine_version,
+        "engine_args": " ".join(shlex.quote(a) for a in args),
+        "model_env_json": json.dumps(env),
         "served_model_name": served_name,
         "resolved_quantization": quant_key,
         "device": device or "cuda",
         "engine": engine,
+        # Backward-compatible aliases
+        "vllm_version": engine_version,
     }
 
     github_env = os.environ.get("GITHUB_ENV")
