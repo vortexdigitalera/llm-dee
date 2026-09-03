@@ -1,9 +1,11 @@
-name: Run LLM (vLLM + Cloudflare quick tunnel)
+name: Run LLM (vLLM / MLX / Ollama + Cloudflare tunnel)
 
-# Core engine workflow. Runs entirely on GitHub-hosted macos-latest.
-# Detects the accelerator on the runner (Apple Silicon / Metal), deploys vLLM,
+# Core engine workflow. Runs on GitHub-hosted ubuntu-latest (Ollama CPU) or a
+# self-hosted GPU/macOS runner. Detects the accelerator, deploys the selected
+# engine (vLLM on CUDA, MLX on Apple Silicon, Ollama for GGUF on CPU/GPU),
 # caches the HF weights for reuse, and exposes a public OpenAI-compatible
-# endpoint via a Cloudflare quick tunnel (no Argo, no account, no token).
+# endpoint (plus Ollama native REST /api/* when using the Ollama engine) via a
+# Cloudflare quick tunnel (no Argo, no account, no token).
 
 on:
   workflow_dispatch:
@@ -171,6 +173,10 @@ jobs:
             echo "| **OpenAI API** | \`${URL}/v1\` |"
             echo "| **Chat** | \`POST ${URL}/v1/chat/completions\` |"
             echo "| **Models** | \`GET ${URL}/v1/models\` |"
+            if [[ "${{ steps.resolve.outputs.engine }}" == "ollama" ]]; then
+              echo "| **Ollama REST** | \`POST ${URL}/api/chat\` &middot; \`POST ${URL}/api/generate\` &middot; \`GET ${URL}/api/tags\` |"
+              echo "| **Tool calling** | \`tools\` field in /v1/chat/completions & /api/chat |"
+            fi
             echo "| **Logs** | \`${URL}/logs\` |"
             echo "| **Model** | \`${{ steps.resolve.outputs.served_model_name }}\` |"
             echo "| **HF repo** | \`${{ steps.resolve.outputs.hf_repo }}\` |"
@@ -188,18 +194,31 @@ jobs:
           echo "│ Endpoint live"
           echo "│   landing : ${URL}/"
           echo "│   api     : ${URL}/v1"
+          if [[ "${{ steps.resolve.outputs.engine }}" == "ollama" ]]; then
+            echo "│   rest    : ${URL}/api"
+          fi
           echo "│   logs    : ${URL}/logs"
           echo "│   model   : ${{ steps.resolve.outputs.served_model_name }}"
           echo "└──────────────────────────────────────────────────────────"
 
       - name: Keep alive for ${{ steps.ttl.outputs.minutes }} minutes
+        env:
+          ENGINE: ${{ steps.resolve.outputs.engine }}
         run: |
           ENDPOINT_URL="$(cat state/endpoint_url)"
+          # Engine-aware PID/log filenames (ollama vs vllm/mlx)
+          if [[ "$ENGINE" == "ollama" ]]; then
+            SERVER_PID_FILE=state/ollama.pid
+            SERVER_LOG=ollama.log
+          else
+            SERVER_PID_FILE=state/vllm.pid
+            SERVER_LOG=vllm.log
+          fi
           echo "Endpoint ${ENDPOINT_URL} alive for ${{ steps.ttl.outputs.minutes }}m"
           deadline=$(( $(date +%s) + ${{ steps.ttl.outputs.minutes }} * 60 ))
           while [[ $(date +%s) -lt $deadline ]]; do
-            if ! kill -0 "$(cat state/vllm.pid)" 2>/dev/null; then
-              echo "::error::vLLM died during keep-alive"; tail -n 100 vllm.log; exit 1
+            if ! kill -0 "$(cat "$SERVER_PID_FILE")" 2>/dev/null; then
+              echo "::error::server died during keep-alive"; tail -n 100 "$SERVER_LOG"; exit 1
             fi
             if ! kill -0 "$(cat state/landing.pid)" 2>/dev/null; then
               echo "::error::landing proxy died during keep-alive"; tail -n 50 landing.log; exit 1
@@ -226,6 +245,7 @@ jobs:
           name: logs-${{ inputs.model_key }}-${{ github.run_id }}
           path: |
             vllm.log
+            ollama.log
             cloudflared.log
           if-no-files-found: ignore
           retention-days: 7

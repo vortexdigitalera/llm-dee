@@ -3,12 +3,15 @@
 
 Serves on :8000 (the public-facing port the tunnel points at):
   GET /            -> landing page with a live connection-info table + log viewer
-  GET /logs        -> plain-text tail of the server log (vllm.log)
+  GET /logs        -> plain-text tail of the server log (vllm.log / ollama.log)
   GET /healthz     -> proxy health (200 when backend is up)
-  /v1/*            -> reverse-proxied to the MLX/vLLM backend on :8001
+  /v1/*            -> reverse-proxied to the backend (OpenAI-compatible API)
+  /api/*           -> reverse-proxied to the backend (Ollama native REST API)
 
-This fixes the "url not found" 404 at the root and gives a fast config/access
-table plus an external log viewer, without touching the backend server.
+For the Ollama engine the backend runs on the standard Ollama port 11434 and
+exposes both /v1/* (OpenAI) and /api/* (native REST, including /api/chat for
+tool calling). Both are forwarded transparently so clients can use either API
+style. For vLLM/MLX the backend is on 8001 and only /v1/* is meaningful.
 """
 from __future__ import annotations
 
@@ -25,6 +28,7 @@ PORT = int(os.environ.get("LANDING_PORT", "8000"))
 LOG_FILE = os.environ.get("SERVER_LOG", "vllm.log")
 MODEL = os.environ.get("SERVED_MODEL_NAME", "model")
 HF_REPO = os.environ.get("HF_REPO", "")
+ENGINE = os.environ.get("ENGINE", "")
 PUBLIC_URL = os.environ.get("TUNNEL_PUBLIC_HOSTNAME", "").rstrip("/")
 START = time.time()
 
@@ -33,6 +37,9 @@ START = time.time()
 #   - Ollama:   the served-name alias itself (we `ollama create` that name)
 # For Ollama, HF_REPO is an hf.co tag the daemon doesn't know, so don't rewrite.
 MODEL_ID = MODEL if HF_REPO.startswith("hf.co/") else (HF_REPO or MODEL)
+
+# Whether the backend exposes Ollama native REST (/api/*).
+IS_OLLAMA = ENGINE == "ollama"
 
 
 def _uptime() -> str:
@@ -96,7 +103,7 @@ LANDING = """<!doctype html>
 </style></head><body>
 <div class="wrap">
  <header><span class="dot" id="dot"></span><h1>llm-dee &middot; LLM endpoint</h1></header>
- <div class="sub">OpenAI-compatible API &middot; Cloudflare named tunnel &middot; live for {uptime}</div>
+ <div class="sub">OpenAI-compatible API &middot; Ollama native REST &middot; tool calling &middot; Cloudflare tunnel &middot; live for {uptime}</div>
 
  <div class="card"><h2>Connection</h2>
  <table>
@@ -105,6 +112,7 @@ LANDING = """<!doctype html>
   <tr><th>OpenAI API base</th><td><code>{base}/v1</code></td></tr>
   <tr><th>Chat completions</th><td><code>POST {base}/v1/chat/completions</code></td></tr>
   <tr><th>Models</th><td><code>GET {base}/v1/models</code></td></tr>
+  {ollama_rest}
   <tr><th>Model id</th><td><code>{model}</code></td></tr>
   <tr><th>HF repo</th><td><code>{repo}</code></td></tr>
  </table></div>
@@ -194,12 +202,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/" or path == "/index.html":
             status = ('<span class="pill on">online</span>' if _backend_up()
                       else '<span class="pill off">backend starting…</span>')
+            ollama_rest = (
+                "  <tr><th>Ollama REST</th><td><code>POST {base}/api/chat</code> &nbsp;&middot;&nbsp; "
+                "<code>POST {base}/api/generate</code> &nbsp;&middot;&nbsp; "
+                "<code>GET {base}/api/tags</code></td></tr>\n"
+                "  <tr><th>Tool calling</th><td><code>tools</code> field in /v1/chat/completions &amp; /api/chat</td></tr>\n"
+            ).format(base=html.escape(PUBLIC_URL or f"http://localhost:{PORT}"))
             body = LANDING.format(
                 status=status,
                 base=html.escape(PUBLIC_URL or f"http://localhost:{PORT}"),
                 model=html.escape(MODEL_ID),
                 repo=html.escape(HF_REPO),
                 uptime=_uptime(),
+                ollama_rest=ollama_rest if IS_OLLAMA else "",
             ).encode()
             self._send(200, body)
         elif path == "/healthz":
@@ -214,13 +229,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._send(200, data, "text/plain; charset=utf-8")
             except Exception as e:
                 self._send(200, f"(no log yet: {e})".encode(), "text/plain")
-        elif path.startswith("/v1/"):
+        elif path.startswith("/v1/") or path.startswith("/api/"):
             self._proxy()
         else:
             self._send(404, b"not found\n", "text/plain")
 
     def do_POST(self):
-        if self.path.split("?", 1)[0].startswith("/v1/"):
+        p = self.path.split("?", 1)[0]
+        if p.startswith("/v1/") or p.startswith("/api/"):
             self._proxy()
         else:
             self._send(404, b"not found\n", "text/plain")
@@ -238,7 +254,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         data = self.rfile.read(length) if length else None
         # Rewrite the served-name alias to the backend's real model id (HF repo),
         # so clients can use either name and MLX won't 404 on an unknown repo.
-        if data and MODEL_ID and MODEL and MODEL_ID != MODEL:
+        # For Ollama /api/* endpoints the model field may be absent or use the
+        # served-name alias — only rewrite for /v1/ OpenAI endpoints.
+        if data and MODEL_ID and MODEL and MODEL_ID != MODEL and self.path.startswith("/v1/"):
             try:
                 import json as _json
                 payload = _json.loads(data)
@@ -253,15 +271,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 req.add_header(h, self.headers[h])
         try:
             with urllib.request.urlopen(req, timeout=300) as resp:
-                body = resp.read()
+                # Stream the response back. Ollama /api/chat and /api/generate
+                # return chunked NDJSON when stream:true; vLLM /v1/* may also
+                # stream (SSE). Forward content-type and chunk as-is.
                 self.send_response(resp.status)
                 self.send_header("Content-Type", resp.headers.get("Content-Type", "application/json"))
-                self.send_header("Content-Length", str(len(body)))
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "content-type,authorization")
                 self.end_headers()
-                self.wfile.write(body)
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
         except urllib.error.HTTPError as e:
             body = e.read()
             self.send_response(e.code)

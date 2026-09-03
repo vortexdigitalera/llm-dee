@@ -113,31 +113,47 @@ echo "served: ${SERVED_MODEL_NAME}"
 BACKEND_PORT=8001
 
 if [[ "$ENGINE" == "ollama" ]]; then
+  # Ollama standard port is 11434. We run the daemon on 11434 directly and
+  # the landing proxy on 8000 forwards both /v1/* (OpenAI) and /api/* (Ollama
+  # native REST) to it. This matches Ollama base standards — no vLLM-style
+  # port 8001 indirection.
+  BACKEND_PORT=11434
+  LOG_FILE="ollama.log"
+  PID_FILE="state/ollama.pid"
+else
+  BACKEND_PORT=8001
+  LOG_FILE="vllm.log"
+  PID_FILE="state/vllm.pid"
+fi
+
+if [[ "$ENGINE" == "ollama" ]]; then
   # Ollama OpenAI-compatible server. HF_REPO is expected to be an Ollama tag
-  # (e.g. hf.co/orcarouter/Qwen3.8-27B-Uncensored-GGUF:Qwen3.8-27B-Uncensored-IQ2_XXS).
-  # Start the daemon if it isn't running, pull the model, then create a model
-  # alias under the served name so /v1/models reports the friendly id.
-  echo "backend: ollama (port ${BACKEND_PORT})"
+  # (e.g. orcarouter/Qwen3.8-27B-Uncensored:iq2_xxs) or an hf.co GGUF tag.
+  # Start the daemon on the standard Ollama port 11434, pull the model, then
+  # create a model alias under the served name so /v1/models reports the
+  # friendly id. Ollama's native REST API (/api/*) and OpenAI API (/v1/*) are
+  # both served on this port — the landing proxy forwards both.
+  echo "backend: ollama (port ${BACKEND_PORT}) — standard Ollama port"
   echo "ollama tag: ${HF_REPO}"
 
-  # Run our own daemon on the backend port. Stop any installer-started service
-  # (it binds 11434 and would make the CLI talk to the wrong daemon / PID).
+  # Run our own daemon on the standard Ollama port. Stop any installer-started
+  # service (it binds 11434 and would conflict with our daemon).
   export OLLAMA_HOST="127.0.0.1:${BACKEND_PORT}"
   if command -v systemctl >/dev/null 2>&1; then
     sudo systemctl stop ollama 2>/dev/null || true
   fi
   pkill -f 'ollama serve' 2>/dev/null || true
   sleep 1
-  echo "starting ollama daemon on ${OLLAMA_HOST}"
-  nohup ollama serve > vllm.log 2>&1 &
-  echo $! > state/vllm.pid
+  echo "starting ollama daemon on ${OLLAMA_HOST} (standard port ${BACKEND_PORT})"
+  nohup ollama serve > "${LOG_FILE}" 2>&1 &
+  echo $! > "${PID_FILE}"
   for i in $(seq 1 60); do
     if curl -fsS "http://${OLLAMA_HOST}/api/tags" >/dev/null 2>&1; then
       echo "ollama daemon ready after ${i}s"; break
     fi
-    if ! kill -0 "$(cat state/vllm.pid)" 2>/dev/null; then
+    if ! kill -0 "$(cat "${PID_FILE}")" 2>/dev/null; then
       echo "::error::ollama daemon died at startup — last 50 log lines:"
-      tail -n 50 vllm.log || true
+      tail -n 50 "${LOG_FILE}" || true
       exit 1
     fi
     sleep 1
@@ -170,21 +186,22 @@ PY
     cat > "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" <<EOF
 FROM ${GGUF_PATH}
 EOF
-    ollama create "${SERVED_MODEL_NAME}" -f "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" 2>&1 | tee -a vllm.log
+    ollama create "${SERVED_MODEL_NAME}" -f "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" 2>&1 | tee -a "${LOG_FILE}"
   else
     # --- Native Ollama registry path ---
     echo "pulling ${HF_REPO} from ollama.com ..."
-    ollama pull "${HF_REPO}" 2>&1 | tee -a vllm.log
+    ollama pull "${HF_REPO}" 2>&1 | tee -a "${LOG_FILE}"
     # Create an alias under the served name so /v1/models reports the friendly id.
     MODEL_ALIAS_DIR="${HF_HOME}/ollama-aliases"
     mkdir -p "${MODEL_ALIAS_DIR}"
     cat > "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" <<EOF
 FROM ${HF_REPO}
 EOF
-    ollama create "${SERVED_MODEL_NAME}" -f "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" 2>&1 | tee -a vllm.log
+    ollama create "${SERVED_MODEL_NAME}" -f "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" 2>&1 | tee -a "${LOG_FILE}"
   fi
 
-  # Ollama exposes /v1 on its own port; state/vllm.pid already holds the daemon PID.
+  # Ollama exposes /v1 (OpenAI) and /api (native REST) on its own port.
+  # ${PID_FILE} already holds the daemon PID.
 
 elif [[ "$ENGINE" == "mlx" ]]; then
   # MLX OpenAI-compatible server. It does not understand vLLM args; pass only
@@ -194,8 +211,8 @@ elif [[ "$ENGINE" == "mlx" ]]; then
     --model "${HF_REPO}" \
     --host 127.0.0.1 \
     --port "${BACKEND_PORT}" \
-    > vllm.log 2>&1 &
-  echo $! > state/vllm.pid
+    > "${LOG_FILE}" 2>&1 &
+  echo $! > "${PID_FILE}"
 else
   echo "backend: vLLM (port ${BACKEND_PORT})"
   echo "args:    ${VLLM_ARGS}"
@@ -205,39 +222,43 @@ else
     --port "${BACKEND_PORT}" \
     ${VLLM_ARGS} \
     "${API_KEY_ARGS[@]}" \
-    > vllm.log 2>&1 &
-  echo $! > state/vllm.pid
+    > "${LOG_FILE}" 2>&1 &
+  echo $! > "${PID_FILE}"
 fi
-echo "server pid: $(cat state/vllm.pid)"
+echo "server pid: $(cat "${PID_FILE}")"
 echo "::endgroup::"
 
 echo "Waiting for backend /health on :${BACKEND_PORT} ..."
 for i in $(seq 1 240); do
   if curl -fsS "http://127.0.0.1:${BACKEND_PORT}/health" >/dev/null 2>&1 \
-     || curl -fsS "http://127.0.0.1:${BACKEND_PORT}/v1/models" >/dev/null 2>&1; then
+     || curl -fsS "http://127.0.0.1:${BACKEND_PORT}/v1/models" >/dev/null 2>&1 \
+     || curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/tags" >/dev/null 2>&1; then
     echo "backend is healthy after ~$((i * 5))s"
     break
   fi
-  if [[ "$ENGINE" != "ollama" ]] && ! kill -0 "$(cat state/vllm.pid)" 2>/dev/null; then
+  if [[ "$ENGINE" != "ollama" ]] && ! kill -0 "$(cat "${PID_FILE}")" 2>/dev/null; then
     echo "::error::vLLM/MLX process died — last 200 log lines:"
-    tail -n 200 vllm.log || true
+    tail -n 200 "${LOG_FILE}" || true
     exit 1
   fi
   if [[ "$i" == "240" ]]; then
     echo "::error::backend did not become healthy within 20 minutes"
-    tail -n 200 vllm.log || true
+    tail -n 200 "${LOG_FILE}" || true
     exit 1
   fi
   sleep 5
 done
 
 # --- Landing / log-viewer proxy on the public port 8000 ----------------------
+# The proxy forwards /v1/* (OpenAI API) and /api/* (Ollama native REST) to the
+# backend, serves a landing page + log viewer, and adds CORS headers.
 echo "::group::Start landing proxy (:8000 -> :${BACKEND_PORT})"
 BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}" \
 LANDING_PORT=8000 \
-SERVER_LOG=vllm.log \
+SERVER_LOG="${LOG_FILE}" \
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME}" \
 HF_REPO="${HF_REPO}" \
+ENGINE="${ENGINE}" \
   nohup python3 scripts/landing.py > landing.log 2>&1 &
 echo $! > state/landing.pid
 echo "landing pid: $(cat state/landing.pid)"
