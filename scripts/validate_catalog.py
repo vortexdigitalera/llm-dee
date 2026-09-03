@@ -17,8 +17,8 @@ CATALOG = REPO_ROOT / "models.json"
 SCHEMA = REPO_ROOT / "models.schema.json"
 
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-# Ollama tags can reference HF repos via hf.co/<org>/<repo>:<tag>
-OLLAMA_TAG_RE = re.compile(r"^hf\.co/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$")
+# Ollama tags: hf.co/<org>/<repo>:<file> (HF GGUF) or <org>/<repo>:<tag> (native)
+OLLAMA_TAG_RE = re.compile(r"^(hf\.co/)?[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$")
 KNOWN_QUANTS = {"awq", "gptq", "fp8", "nvfp4", "compressed-tensors", "squeezellm", "marlin", "none"}
 KNOWN_DTYPES = {"auto", "float16", "bfloat16", "float32"}
 

@@ -226,9 +226,37 @@
             "engine": "mlx",
             "extra_vllm_args": []
         },
+        "qwen3.8-27b-uncensored-ollama": {
+            "hf_repo": "orcarouter/Qwen3.8-27B-Uncensored:mlx-2bit",
+            "description": "OrcaRouter Qwen3.8 27B uncensored served via Ollama native registry (orcarouter/Qwen3.8-27B-Uncensored:mlx-2bit, ~8.7 GB). No HF_TOKEN needed — pulls directly from ollama.com. Runs on GitHub-hosted ubuntu-latest via CPU; a CUDA or Apple-Silicon self-hosted runner is much faster.",
+            "runner_labels": [
+                "ubuntu-latest"
+            ],
+            "requires_hf_token": false,
+            "quantizations": {
+                "mlx-2bit": {
+                    "repo": "orcarouter/Qwen3.8-27B-Uncensored:mlx-2bit",
+                    "dtype": "float16"
+                },
+                "mlx-4bit": {
+                    "repo": "orcarouter/Qwen3.8-27B-Uncensored:mlx-4bit",
+                    "dtype": "float16"
+                },
+                "mlx-8bit": {
+                    "repo": "orcarouter/Qwen3.8-27B-Uncensored:mlx-8bit",
+                    "dtype": "float16"
+                }
+            },
+            "default_quantization": "mlx-2bit",
+            "max_model_len": 8192,
+            "gpu_memory_utilization": 0.85,
+            "min_vram_gb": 0,
+            "engine": "ollama",
+            "extra_vllm_args": []
+        },
         "qwen3.8-27b-uncensored-gguf-ollama": {
             "hf_repo": "orcarouter/Qwen3.8-27B-Uncensored-GGUF",
-            "description": "OrcaRouter Qwen3.8 27B uncensored GGUF served via Ollama. Defaults to IQ2_XXS (~8.3 GB). Runs on GitHub-hosted ubuntu-latest via CPU; a CUDA or Apple-Silicon self-hosted runner is much faster.",
+            "description": "OrcaRouter Qwen3.8 27B uncensored GGUF served via Ollama (HF GGUF blobs). Defaults to IQ2_XXS (~8.3 GB). Requires HF_TOKEN for gated repo. Runs on GitHub-hosted ubuntu-latest via CPU.",
             "runner_labels": [
                 "ubuntu-latest"
             ],

@@ -181,6 +181,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "content-type,authorization")
         self.end_headers()
         self.wfile.write(body)
 
@@ -256,11 +258,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Content-Type", resp.headers.get("Content-Type", "application/json"))
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "content-type,authorization")
                 self.end_headers()
                 self.wfile.write(body)
         except urllib.error.HTTPError as e:
             body = e.read()
-            self._send(e.code, body, "application/json")
+            self.send_response(e.code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "content-type,authorization")
+            self.end_headers()
+            self.wfile.write(body)
         except Exception as e:
             self._send(502, f'{{"error":"backend unreachable: {e}"}}'.encode(), "application/json")
 

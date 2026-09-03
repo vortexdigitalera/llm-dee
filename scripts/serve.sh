@@ -143,34 +143,46 @@ if [[ "$ENGINE" == "ollama" ]]; then
     sleep 1
   done
 
-  # Ollama's `hf.co` pull fails on gated repos (HF redirects to huggingface.co
-  # auth realm and Ollama rejects the host mismatch). Download the GGUF blob
-  # directly with huggingface_hub (handles HF_TOKEN auth), then `ollama create`
-  # from a local Modelfile pointing at the file.
-  # HF_REPO format: hf.co/<org>/<repo>:<filename>  (the tag may omit .gguf)
-  GGUF_FILE="${HF_REPO##*:}"
-  HF_GGUF_REPO="${HF_REPO#hf.co/}"; HF_GGUF_REPO="${HF_GGUF_REPO%%:*}"
-  # The catalog tag is the quant name (e.g. ...-IQ2_XXS); the blob is <name>.gguf.
-  if [[ "${GGUF_FILE}" != *.gguf ]]; then
-    GGUF_FILE="${GGUF_FILE}.gguf"
-  fi
-  echo "downloading ${GGUF_FILE} from ${HF_GGUF_REPO} via huggingface_hub ..."
-  python3 -m pip install --quiet "huggingface_hub[hf_transfer]"
-  GGUF_PATH="$(python3 - "$HF_GGUF_REPO" "$GGUF_FILE" <<'PY'
+  # Pull the model. Two formats are supported:
+  #   1. Native Ollama tag:  orcarouter/Qwen3.8-27B-Uncensored:mlx-2bit
+  #      -> `ollama pull` fetches from ollama.com (no HF_TOKEN needed).
+  #   2. HF GGUF tag:         hf.co/<org>/<repo>:<file>
+  #      -> Ollama's hf.co pull fails on gated repos, so download the GGUF blob
+  #         directly with huggingface_hub (handles HF_TOKEN auth) and create
+  #         from a local Modelfile.
+  if [[ "${HF_REPO}" == hf.co/* ]]; then
+    # --- HF GGUF path (gated-repo safe) ---
+    GGUF_FILE="${HF_REPO##*:}"
+    HF_GGUF_REPO="${HF_REPO#hf.co/}"; HF_GGUF_REPO="${HF_GGUF_REPO%%:*}"
+    if [[ "${GGUF_FILE}" != *.gguf ]]; then
+      GGUF_FILE="${GGUF_FILE}.gguf"
+    fi
+    echo "downloading ${GGUF_FILE} from ${HF_GGUF_REPO} via huggingface_hub ..."
+    GGUF_PATH="$(python3 - "$HF_GGUF_REPO" "$GGUF_FILE" <<'PY'
 import sys
 from huggingface_hub import hf_hub_download
 print(hf_hub_download(sys.argv[1], sys.argv[2]))
 PY
 )"
-  echo "downloaded to ${GGUF_PATH}"
-
-  # Create a Modelfile from the local GGUF blob.
-  MODEL_ALIAS_DIR="${HF_HOME}/ollama-aliases"
-  mkdir -p "${MODEL_ALIAS_DIR}"
-  cat > "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" <<EOF
+    echo "downloaded to ${GGUF_PATH}"
+    MODEL_ALIAS_DIR="${HF_HOME}/ollama-aliases"
+    mkdir -p "${MODEL_ALIAS_DIR}"
+    cat > "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" <<EOF
 FROM ${GGUF_PATH}
 EOF
-  ollama create "${SERVED_MODEL_NAME}" -f "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" 2>&1 | tee -a vllm.log
+    ollama create "${SERVED_MODEL_NAME}" -f "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" 2>&1 | tee -a vllm.log
+  else
+    # --- Native Ollama registry path ---
+    echo "pulling ${HF_REPO} from ollama.com ..."
+    ollama pull "${HF_REPO}" 2>&1 | tee -a vllm.log
+    # Create an alias under the served name so /v1/models reports the friendly id.
+    MODEL_ALIAS_DIR="${HF_HOME}/ollama-aliases"
+    mkdir -p "${MODEL_ALIAS_DIR}"
+    cat > "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" <<EOF
+FROM ${HF_REPO}
+EOF
+    ollama create "${SERVED_MODEL_NAME}" -f "${MODEL_ALIAS_DIR}/${SERVED_MODEL_NAME}.modelfile" 2>&1 | tee -a vllm.log
+  fi
 
   # Ollama exposes /v1 on its own port; state/vllm.pid already holds the daemon PID.
 

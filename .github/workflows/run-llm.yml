@@ -13,6 +13,7 @@ on:
         required: true
         type: choice
         options:
+          - qwen3.8-27b-uncensored-ollama
           - qwen3.8-27b-uncensored-gguf-ollama
           - qwen3.8-27b-uncensored-mlx
           - qwen2.5-1.5b-mlx-4bit
@@ -20,7 +21,7 @@ on:
           - qwen3.8-flash-next-uncensored
           - glm-5.3-flash-uncensored
           - gemma-4-26b-a4b-it-uncensored
-        default: qwen3.8-27b-uncensored-gguf-ollama
+        default: qwen3.8-27b-uncensored-ollama
       ttl_minutes:
         description: "Keep alive (min, max 360)"
         required: false
@@ -118,6 +119,10 @@ jobs:
 
       - name: Start Cloudflare quick tunnel
         id: tunnel
+        env:
+          SERVED_MODEL_NAME: ${{ steps.resolve.outputs.served_model_name }}
+          HF_REPO: ${{ steps.resolve.outputs.hf_repo }}
+          RESOLVED_QUANTIZATION: ${{ steps.resolve.outputs.resolved_quantization }}
         run: bash scripts/start_tunnel.sh
 
       - name: External probe through tunnel
