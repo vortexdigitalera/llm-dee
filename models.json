@@ -227,27 +227,35 @@
             "extra_vllm_args": []
         },
         "qwen3.8-27b-uncensored-ollama": {
-            "hf_repo": "orcarouter/Qwen3.8-27B-Uncensored:mlx-2bit",
-            "description": "OrcaRouter Qwen3.8 27B uncensored served via Ollama native registry (orcarouter/Qwen3.8-27B-Uncensored:mlx-2bit, ~8.7 GB). No HF_TOKEN needed — pulls directly from ollama.com. Runs on GitHub-hosted ubuntu-latest via CPU; a CUDA or Apple-Silicon self-hosted runner is much faster.",
+            "hf_repo": "orcarouter/Qwen3.8-27B-Uncensored:iq2_xxs",
+            "description": "OrcaRouter Qwen3.8 27B uncensored served via Ollama native registry (GGUF format). Defaults to iq2_xxs (~8.3 GB). No HF_TOKEN needed — pulls directly from ollama.com. Runs on GitHub-hosted ubuntu-latest via CPU; a CUDA or Apple-Silicon self-hosted runner is much faster. Use mlx-* tags only on Apple Silicon.",
             "runner_labels": [
                 "ubuntu-latest"
             ],
             "requires_hf_token": false,
             "quantizations": {
-                "mlx-2bit": {
-                    "repo": "orcarouter/Qwen3.8-27B-Uncensored:mlx-2bit",
+                "iq2_xxs": {
+                    "repo": "orcarouter/Qwen3.8-27B-Uncensored:iq2_xxs",
                     "dtype": "float16"
                 },
-                "mlx-4bit": {
-                    "repo": "orcarouter/Qwen3.8-27B-Uncensored:mlx-4bit",
+                "iq2_m": {
+                    "repo": "orcarouter/Qwen3.8-27B-Uncensored:iq2_m",
                     "dtype": "float16"
                 },
-                "mlx-8bit": {
-                    "repo": "orcarouter/Qwen3.8-27B-Uncensored:mlx-8bit",
+                "iq3_m": {
+                    "repo": "orcarouter/Qwen3.8-27B-Uncensored:iq3_m",
+                    "dtype": "float16"
+                },
+                "q2_k": {
+                    "repo": "orcarouter/Qwen3.8-27B-Uncensored:q2_K",
+                    "dtype": "float16"
+                },
+                "q4_k_m": {
+                    "repo": "orcarouter/Qwen3.8-27B-Uncensored:q4_K_M",
                     "dtype": "float16"
                 }
             },
-            "default_quantization": "mlx-2bit",
+            "default_quantization": "iq2_xxs",
             "max_model_len": 8192,
             "gpu_memory_utilization": 0.85,
             "min_vram_gb": 0,
